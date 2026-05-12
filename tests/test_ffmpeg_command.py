@@ -61,11 +61,25 @@ def test_build_command_audio_only_codecs_strip_video():
     assert argv[argv.index("-c:a") + 1] == "libmp3lame"
 
 
-def test_build_command_no_reconnect_for_non_http():
-    # ftp is not allowed at API layer, but builder should be defensive
+def test_build_command_rejects_non_http_schemes():
+    # Strict allowlist: any scheme other than http/https (and empty scheme for
+    # local paths) is rejected. ftp, rtsp, gopher, etc. all hit this.
+    for bad in ("ftp://example.com/x.mp4", "rtsp://x/y", "gopher://x/y"):
+        with pytest.raises(UnsupportedSchemeError):
+            build_command(
+                ffmpeg_bin="ffmpeg",
+                input_url=bad,
+                output_path="/out/x.mp4",
+                codec="copy",
+                extension="mp4",
+            )
+
+
+def test_build_command_no_reconnect_for_local_path():
+    # Empty-scheme inputs (local file paths) are accepted but get no -reconnect.
     argv = build_command(
         ffmpeg_bin="ffmpeg",
-        input_url="ftp://example.com/file.mp4",
+        input_url="/tmp/local-file.mp4",
         output_path="/out/x.mp4",
         codec="copy",
         extension="mp4",

@@ -151,7 +151,11 @@ def register(app: Flask) -> None:
 
     @app.get("/api/downloads")
     def list_downloads():
-        limit = min(int(request.args.get("limit", "50")), 200)
+        try:
+            limit = int(request.args.get("limit", "50"))
+        except ValueError:
+            limit = 50
+        limit = min(max(limit, 1), 200)
         db = current_app.extensions["db"]
         return jsonify(db.list_jobs(limit=limit))
 

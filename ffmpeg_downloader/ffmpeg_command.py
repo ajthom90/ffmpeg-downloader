@@ -50,13 +50,10 @@ def build_command(
         raise UnsupportedCodecError(f"unknown codec: {codec}")
 
     scheme = urlparse(input_url).scheme.lower()
-    # We still let the builder run for "" (path) inputs to support local tests,
-    # but explicitly block known-dangerous schemes.
-    if (
-        scheme not in ("http", "https")
-        and not _looks_like_path(scheme)
-        and scheme in ("file", "pipe", "concat", "data")
-    ):
+    # Strict allowlist. The API layer already gates this, but enforcing it
+    # here keeps build_command's contract self-contained: only http(s) URLs
+    # (or empty-scheme local paths, used by tests) ever reach ffmpeg.
+    if scheme not in ("http", "https") and scheme != "":
         raise UnsupportedSchemeError(f"unsupported scheme: {scheme}")
 
     cfg = CODEC_MAP[codec]
@@ -83,11 +80,6 @@ def build_command(
 
     argv += ["-progress", "pipe:1", "-nostats", "-y", output_path]
     return argv
-
-
-def _looks_like_path(scheme: str) -> bool:
-    """An empty urlparse scheme means a plain path (or Windows drive letter handled elsewhere)."""
-    return scheme == ""
 
 
 def pretty_command(argv: list[str]) -> str:

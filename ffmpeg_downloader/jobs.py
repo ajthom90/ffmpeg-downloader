@@ -295,6 +295,10 @@ def _finalize(
         fields["progress"] = progress
     with self._db_lock:
         self._db.update_job(job_id, **fields)
+    # Job is done — drop any cancellation flag so the set doesn't grow unbounded
+    # across the life of the JobManager.
+    with self._lock:
+        self._cancelled.discard(job_id)
     self._publish_status(job_id, status)
 
 
