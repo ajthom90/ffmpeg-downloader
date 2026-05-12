@@ -98,3 +98,54 @@ def _mkdir(self, rel: str, name: str) -> str:
 
 RootedFS.browse = _browse  # type: ignore[attr-defined]
 RootedFS.mkdir = _mkdir  # type: ignore[attr-defined]
+
+
+def _validate(self, rel: str) -> dict:
+    target = self.safe_path(rel)
+    if target.exists():
+        return {
+            "exists": True,
+            "is_dir": target.is_dir(),
+            "resolved_path": self.rel(target),
+            "writable": os.access(target, os.W_OK),
+        }
+    # Walk up to the nearest existing ancestor and check that.
+    ancestor = target.parent
+    while ancestor != self.root and not ancestor.exists():
+        ancestor = ancestor.parent
+    writable = ancestor.exists() and os.access(ancestor, os.W_OK)
+    return {
+        "exists": False,
+        "is_dir": False,
+        "resolved_path": self.rel(target),
+        "writable": writable,
+    }
+
+
+def _autocomplete(self, prefix: str) -> list[dict]:
+    cleaned = (prefix or "").lstrip("/")
+    if cleaned == "" or cleaned.endswith("/"):
+        parent_rel = cleaned.rstrip("/")
+        last_seg = ""
+    else:
+        parent_rel, _, last_seg = cleaned.rpartition("/")
+    try:
+        parent = self.safe_path(parent_rel)
+    except PathTraversalError:
+        return []
+    if not parent.is_dir():
+        return []
+    needle = last_seg.lower()
+    matches = []
+    for entry in os.scandir(parent):
+        if not entry.is_dir(follow_symlinks=False):
+            continue
+        if needle and needle not in entry.name.lower():
+            continue
+        matches.append({"name": entry.name, "path": self.rel(Path(entry.path))})
+    matches.sort(key=lambda m: m["name"].lower())
+    return matches[:10]
+
+
+RootedFS.validate = _validate  # type: ignore[attr-defined]
+RootedFS.autocomplete = _autocomplete  # type: ignore[attr-defined]

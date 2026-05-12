@@ -133,3 +133,88 @@ def test_mkdir_idempotent_returns_existing(download_root: Path):
     fs = RootedFS(download_root)
     out = fs.mkdir("", "Movies")
     assert out == "Movies"
+
+
+def test_validate_existing_directory(download_root: Path):
+    (download_root / "Movies").mkdir()
+    fs = RootedFS(download_root)
+    v = fs.validate("Movies")
+    assert v["exists"] is True
+    assert v["is_dir"] is True
+    assert v["resolved_path"] == "Movies"
+    assert v["writable"] is True
+
+
+def test_validate_existing_file(download_root: Path):
+    (download_root / "song.mp3").write_text("x")
+    fs = RootedFS(download_root)
+    v = fs.validate("song.mp3")
+    assert v["exists"] is True
+    assert v["is_dir"] is False
+
+
+def test_validate_missing_path_reports_ancestor_writable(download_root: Path):
+    (download_root / "Movies").mkdir()
+    fs = RootedFS(download_root)
+    v = fs.validate("Movies/NewFolder/SubNew")
+    assert v["exists"] is False
+    assert v["is_dir"] is False
+    assert v["writable"] is True
+
+
+def test_validate_traversal_raises(download_root: Path):
+    fs = RootedFS(download_root)
+    with pytest.raises(PathTraversalError):
+        fs.validate("../etc")
+
+
+def test_validate_root_is_writable(download_root: Path):
+    fs = RootedFS(download_root)
+    v = fs.validate("")
+    assert v["exists"] is True
+    assert v["is_dir"] is True
+    assert v["writable"] is True
+
+
+def test_autocomplete_empty_prefix_lists_root(download_root: Path):
+    (download_root / "Movies").mkdir()
+    (download_root / "Music").mkdir()
+    (download_root / "TVShows").mkdir()
+    fs = RootedFS(download_root)
+    matches = fs.autocomplete("")
+    names = [m["name"] for m in matches]
+    assert names == ["Movies", "Music", "TVShows"]
+
+
+def test_autocomplete_filters_current_segment(download_root: Path):
+    (download_root / "Movies").mkdir()
+    (download_root / "Music").mkdir()
+    fs = RootedFS(download_root)
+    matches = fs.autocomplete("Mo")
+    assert [m["name"] for m in matches] == ["Movies"]
+
+
+def test_autocomplete_drills_into_subfolder(download_root: Path):
+    (download_root / "Movies" / "Office Space (1999)").mkdir(parents=True)
+    (download_root / "Movies" / "October Sky").mkdir()
+    fs = RootedFS(download_root)
+    matches = fs.autocomplete("Movies/Of")
+    names = [m["name"] for m in matches]
+    assert names == ["Office Space (1999)"]
+    paths = [m["path"] for m in matches]
+    assert paths == ["Movies/Office Space (1999)"]
+
+
+def test_autocomplete_trailing_slash_lists_children(download_root: Path):
+    (download_root / "Movies" / "Office").mkdir(parents=True)
+    fs = RootedFS(download_root)
+    matches = fs.autocomplete("Movies/")
+    assert [m["name"] for m in matches] == ["Office"]
+
+
+def test_autocomplete_cap_10(download_root: Path):
+    for i in range(20):
+        (download_root / f"Folder{i:02d}").mkdir()
+    fs = RootedFS(download_root)
+    matches = fs.autocomplete("Folder")
+    assert len(matches) == 10
