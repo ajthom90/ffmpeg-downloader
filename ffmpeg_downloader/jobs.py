@@ -8,14 +8,14 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from ulid import ULID
 
 from .db import Database
-from .ffmpeg_command import build_command, pretty_command
+from .ffmpeg_command import build_command, build_multi_input_command, pretty_command
 from .filesystem import RootedFS
 
 _BAD_FILENAME_CHARS = re.compile(r'[\\/\x00-\x1f<>:"|?*]')
@@ -30,6 +30,8 @@ class JobSpec:
     extension: str
     codec: str
     output_folder: str
+    audio_urls: list[str] = field(default_factory=list)
+    subtitle_urls: list[str] = field(default_factory=list)
 
 
 def _sanitize_filename(name: str, extension: str) -> str:
@@ -96,14 +98,30 @@ class JobManager:
         filename = _resolve_collision(folder_abs, clean_name, spec.extension)
         rel_output = self._fs.rel(folder_abs / filename) if folder_rel else filename
 
-        input_url = spec.selected_variant_url or spec.url
-        argv = build_command(
-            ffmpeg_bin=self._ffmpeg_bin,
-            input_url=input_url,
-            output_path=str(folder_abs / filename),
-            codec=spec.codec,
-            extension=spec.extension,
-        )
+        out_abs = str(folder_abs / filename)
+        if spec.audio_urls or spec.subtitle_urls:
+            # Multi-input mux: requires a specific video stream URL — the master
+            # URL can't be used as the video source when separate audio/subtitle
+            # inputs are also provided (would duplicate streams).
+            video_url = spec.selected_variant_url or spec.url
+            argv = build_multi_input_command(
+                ffmpeg_bin=self._ffmpeg_bin,
+                video_url=video_url,
+                audio_urls=list(spec.audio_urls),
+                subtitle_urls=list(spec.subtitle_urls),
+                output_path=out_abs,
+                codec=spec.codec,
+                extension=spec.extension,
+            )
+        else:
+            input_url = spec.selected_variant_url or spec.url
+            argv = build_command(
+                ffmpeg_bin=self._ffmpeg_bin,
+                input_url=input_url,
+                output_path=out_abs,
+                codec=spec.codec,
+                extension=spec.extension,
+            )
         cmd_str = pretty_command(argv)
         now = int(time.time())
         row = {
@@ -128,7 +146,7 @@ class JobManager:
         }
         with self._db_lock:
             self._db.insert_job(row)
-        self._submit_to_executor(job_id, argv, str(folder_abs / filename))
+        self._submit_to_executor(job_id, argv, out_abs)
         return row
 
     def _submit_to_executor(self, job_id: str, argv: list[str], output_path: str) -> None:

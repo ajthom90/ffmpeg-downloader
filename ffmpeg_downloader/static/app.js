@@ -2,7 +2,7 @@
 // Vanilla JS, ES modules, no framework.
 
 import "./folder-picker.js";
-import "./resolution-picker.js";
+import { getSelectedTrackUrls } from "./resolution-picker.js";
 
 // ---------------------------------------------------------------------------
 // State
@@ -169,12 +169,29 @@ async function api(method, path, body) {
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
+  const audioUrls = getSelectedTrackUrls("audio");
+  const subtitleUrls = getSelectedTrackUrls("subtitle");
+  // Multi-input mux requires a specific video variant. If the user wants
+  // separate audio/subtitle streams but left the video selector on "Auto",
+  // pick the highest-bitrate variant for them (its URL is the first concrete
+  // option in the dropdown).
+  let videoUrl = resolutionSelect.value || null;
+  let videoLabel = videoUrl
+    ? resolutionSelect.options[resolutionSelect.selectedIndex].textContent
+    : null;
+  if (!videoUrl && (audioUrls.length || subtitleUrls.length)) {
+    const firstConcrete = [...resolutionSelect.options].find((o) => o.value);
+    if (firstConcrete) {
+      videoUrl = firstConcrete.value;
+      videoLabel = firstConcrete.textContent;
+    }
+  }
   const body = {
     url: urlInput.value.trim(),
-    selected_variant_url: resolutionSelect.value || null,
-    selected_variant_label: resolutionSelect.value
-      ? resolutionSelect.options[resolutionSelect.selectedIndex].textContent
-      : null,
+    selected_variant_url: videoUrl,
+    selected_variant_label: videoLabel,
+    audio_urls: audioUrls,
+    subtitle_urls: subtitleUrls,
     filename: $("filenameInput").value.trim(),
     extension: $("extensionSelect").value,
     codec: $("codecSelect").value,

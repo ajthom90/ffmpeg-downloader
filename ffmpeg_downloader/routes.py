@@ -101,6 +101,8 @@ def register(app: Flask) -> None:
             {
                 "type": result.type,
                 "variants": result.variants,
+                "audio_tracks": result.audio_tracks,
+                "subtitle_tracks": result.subtitle_tracks,
                 "duration_seconds": result.duration_seconds,
                 "message": result.message,
             }
@@ -120,8 +122,13 @@ def register(app: Flask) -> None:
         except KeyError as e:
             return jsonify({"error": f"missing field: {e.args[0]}"}), 400
 
-        # Scheme guard before touching JobManager.
-        for u in (url, body.get("selected_variant_url") or ""):
+        audio_urls = body.get("audio_urls") or []
+        subtitle_urls = body.get("subtitle_urls") or []
+        if not isinstance(audio_urls, list) or not isinstance(subtitle_urls, list):
+            return jsonify({"error": "audio_urls and subtitle_urls must be arrays"}), 400
+
+        # Scheme guard for every URL the server will hand to ffmpeg.
+        for u in (url, body.get("selected_variant_url") or "", *audio_urls, *subtitle_urls):
             if not u:
                 continue
             scheme = urlparse(u).scheme.lower()
@@ -142,6 +149,8 @@ def register(app: Flask) -> None:
             extension=extension,
             codec=codec,
             output_folder=output_folder,
+            audio_urls=audio_urls,
+            subtitle_urls=subtitle_urls,
         )
         try:
             job = jm.submit(spec)
