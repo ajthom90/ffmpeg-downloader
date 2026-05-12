@@ -218,3 +218,52 @@ def test_autocomplete_cap_10(download_root: Path):
     fs = RootedFS(download_root)
     matches = fs.autocomplete("Folder")
     assert len(matches) == 10
+
+
+def test_search_finds_matches_anywhere(download_root: Path):
+    (download_root / "Movies" / "Office Space (1999)").mkdir(parents=True)
+    (download_root / "TVShows" / "The Office").mkdir(parents=True)
+    (download_root / "TVShows" / "The Office (UK)").mkdir(parents=True)
+    (download_root / "Music" / "Foo").mkdir(parents=True)
+    fs = RootedFS(download_root)
+    result = fs.search("office", limit=10)
+    paths = sorted(m["path"] for m in result["matches"])
+    assert paths == [
+        "Movies/Office Space (1999)",
+        "TVShows/The Office",
+        "TVShows/The Office (UK)",
+    ]
+    assert result["truncated"] is False
+
+
+def test_search_case_insensitive(download_root: Path):
+    (download_root / "OfficeStuff").mkdir()
+    fs = RootedFS(download_root)
+    result = fs.search("OFFICE", limit=10)
+    assert [m["name"] for m in result["matches"]] == ["OfficeStuff"]
+
+
+def test_search_empty_query_returns_nothing(download_root: Path):
+    (download_root / "Movies").mkdir()
+    fs = RootedFS(download_root)
+    result = fs.search("", limit=10)
+    assert result["matches"] == []
+    assert result["truncated"] is False
+
+
+def test_search_truncates(download_root: Path):
+    for i in range(15):
+        (download_root / f"Match{i:02d}").mkdir()
+    fs = RootedFS(download_root)
+    result = fs.search("match", limit=5)
+    assert len(result["matches"]) == 5
+    assert result["truncated"] is True
+
+
+def test_search_cache_invalidated_after_mkdir(download_root: Path):
+    fs = RootedFS(download_root, cache_ttl=60)
+    result = fs.search("alpha", limit=10)
+    assert result["matches"] == []
+    fs.mkdir("", "Alpha")
+    result2 = fs.search("alpha", limit=10)
+    assert [m["name"] for m in result2["matches"]] == ["Alpha"]
