@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from flask import Flask, current_app, jsonify, request
 
+from . import probe as _probe
 from .filesystem import InvalidNameError, PathTraversalError, RootedFS
 
 
@@ -65,3 +68,24 @@ def register(app: Flask) -> None:
         cfg = current_app.extensions["config"]
         limit = min(limit, cfg.search_result_limit)
         return jsonify(_fs().search(q, limit=limit))
+
+    @app.post("/api/probe")
+    def probe():
+        if not request.is_json:
+            return jsonify({"error": "json body required"}), 400
+        body = request.get_json(silent=True) or {}
+        url = body.get("url", "")
+        if not url:
+            return jsonify({"error": "url is required"}), 400
+        scheme = urlparse(url).scheme.lower()
+        if scheme not in ("http", "https"):
+            return jsonify({"error": "only http(s) URLs are allowed"}), 400
+        result = _probe.probe_url(url)
+        return jsonify(
+            {
+                "type": result.type,
+                "variants": result.variants,
+                "duration_seconds": result.duration_seconds,
+                "message": result.message,
+            }
+        )
