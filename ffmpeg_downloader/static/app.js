@@ -204,7 +204,11 @@ form.addEventListener("submit", async (e) => {
     urlInput.value = "";
     // Re-fire input so resolution-picker (loaded as a separate module) clears itself.
     urlInput.dispatchEvent(new Event("input"));
-    $("filenameInput").value = "";
+    // Intentionally don't clear filename / extension / codec / output folder —
+    // batch downloads (e.g. episodes in a season) reuse most of the form;
+    // the user only changes a small part each time.
+    $("filenameInput").focus();
+    $("filenameInput").select();
   } catch (err) {
     alert(`Failed to start download: ${err.message}`);
   }
