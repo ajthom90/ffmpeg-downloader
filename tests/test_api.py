@@ -397,3 +397,15 @@ def test_global_sse_route_exists(client):
     assert r.status_code == 200
     assert r.mimetype == "text/event-stream"
     r.close()
+
+
+def test_index_page_renders(client):
+    r = client.get("/")
+    assert r.status_code == 200
+    assert r.mimetype == "text/html"
+    text = r.get_data(as_text=True)
+    assert "FFmpeg Downloader" in text
+    assert 'id="downloadForm"' in text
+    assert 'id="urlInput"' in text
+    assert 'id="outputFolder"' in text
+    assert 'id="resolutionGroup"' in text  # hidden by default

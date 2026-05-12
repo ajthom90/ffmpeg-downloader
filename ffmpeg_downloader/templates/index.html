@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="version" content="{{ version }}">
+  <title>FFmpeg Downloader</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="page">
+    <h1>FFmpeg Downloader</h1>
+
+    <form id="downloadForm" autocomplete="off">
+      <div class="field">
+        <label for="urlInput">URL</label>
+        <input type="url" id="urlInput" name="url" required
+               placeholder="https://example.com/master.m3u8">
+        <div id="urlHint" class="hint"></div>
+      </div>
+
+      <div class="field" id="resolutionGroup" hidden>
+        <label for="resolutionSelect">Resolution</label>
+        <select id="resolutionSelect" name="selected_variant_url"></select>
+      </div>
+
+      <div class="field">
+        <label for="filenameInput">Output Filename</label>
+        <input type="text" id="filenameInput" name="filename" required
+               placeholder="my video">
+      </div>
+
+      <div class="field">
+        <label for="outputFolder">Output Folder</label>
+        <div class="folder-row">
+          <div class="folder-input-wrap">
+            <input type="text" id="outputFolder" name="output_folder"
+                   placeholder="/" autocomplete="off">
+            <span id="folderStatus" class="folder-status" aria-hidden="true"></span>
+            <ul id="folderSuggestions" class="suggestions" hidden></ul>
+          </div>
+          <button type="button" id="browseBtn" class="btn btn-secondary">Browse</button>
+        </div>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="extensionSelect">Extension</label>
+          <select id="extensionSelect" name="extension">
+            <option value="mp4" selected>mp4</option>
+            <option value="mkv">mkv</option>
+            <option value="webm">webm</option>
+            <option value="mp3">mp3</option>
+            <option value="m4a">m4a</option>
+            <option value="avi">avi</option>
+            <option value="mov">mov</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="codecSelect">Codec</label>
+          <select id="codecSelect" name="codec">
+            <option value="copy" selected>copy (no transcode)</option>
+            <option value="h264">h264</option>
+            <option value="h265">h265</option>
+            <option value="vp9">vp9</option>
+            <option value="aac">aac (audio only)</option>
+            <option value="mp3">mp3 (audio only)</option>
+          </select>
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary submit-btn">Download</button>
+    </form>
+
+    <section class="jobs">
+      <h2>Downloads</h2>
+      <div id="jobsList" class="jobs-list">
+        <div class="no-jobs">No downloads yet</div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Folder Browser Modal -->
+  <div id="folderModal" class="modal-overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="folderModalTitle">
+      <header class="modal-header">
+        <h3 id="folderModalTitle">Select Output Folder</h3>
+        <button type="button" class="modal-close" id="modalCloseBtn" aria-label="Close">&times;</button>
+      </header>
+      <nav class="modal-tabs" role="tablist">
+        <button type="button" class="tab active" data-mode="browse" role="tab" aria-selected="true">Browse</button>
+        <button type="button" class="tab" data-mode="search" role="tab" aria-selected="false">Search</button>
+      </nav>
+      <div class="modal-body">
+        <section id="browseMode">
+          <nav id="breadcrumb" class="breadcrumb" aria-label="Breadcrumb"></nav>
+          <input type="text" id="filterInput" class="filter-input"
+                 placeholder="Filter this folder...">
+          <ul id="folderList" class="folder-list"></ul>
+          <div class="new-folder-row">
+            <input type="text" id="newFolderName" placeholder="New folder name">
+            <button type="button" id="createFolderBtn" class="btn btn-secondary btn-small">Create</button>
+          </div>
+        </section>
+        <section id="searchMode" hidden>
+          <input type="text" id="searchInput" class="search-input"
+                 placeholder="Search all folders...">
+          <ul id="searchResults" class="folder-list"></ul>
+        </section>
+      </div>
+      <footer class="modal-footer">
+        <button type="button" id="cancelFolderBtn" class="btn btn-secondary">Cancel</button>
+        <button type="button" id="selectFolderBtn" class="btn btn-primary">Select This Folder</button>
+      </footer>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='app.js') }}" type="module"></script>
+</body>
+</html>

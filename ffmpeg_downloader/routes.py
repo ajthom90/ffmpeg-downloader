@@ -2,7 +2,15 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from flask import Flask, Response, current_app, jsonify, request, stream_with_context
+from flask import (
+    Flask,
+    Response,
+    current_app,
+    jsonify,
+    render_template,
+    request,
+    stream_with_context,
+)
 
 from . import probe as _probe
 from .ffmpeg_command import UnsupportedCodecError, UnsupportedSchemeError
@@ -15,6 +23,12 @@ def _fs() -> RootedFS:
 
 
 def register(app: Flask) -> None:
+    from . import __version__ as _ver
+
+    @app.get("/")
+    def index():
+        return render_template("index.html", version=_ver)
+
     @app.get("/api/browse")
     def browse():
         path = request.args.get("path", "")
