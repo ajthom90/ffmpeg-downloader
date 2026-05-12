@@ -49,3 +49,52 @@ class RootedFS:
         if p == self.root:
             return ""
         return p.relative_to(self.root).as_posix()
+
+
+class InvalidNameError(ValueError):
+    """A user-supplied folder name was not acceptable."""
+
+
+def _natural_key(item: dict) -> tuple[int, str]:
+    # directories first (0), files second (1); case-insensitive within each group
+    return (0 if item["is_dir"] else 1, item["name"].lower())
+
+
+# Extend RootedFS with methods (still inside the same module/class).
+def _browse(self, rel: str) -> dict:
+    target = self.safe_path(rel)
+    if not target.is_dir():
+        raise FileNotFoundError(rel)
+    items = []
+    for entry in os.scandir(target):
+        items.append(
+            {
+                "name": entry.name,
+                "path": self.rel(Path(entry.path)),
+                "is_dir": entry.is_dir(follow_symlinks=False),
+            }
+        )
+    items.sort(key=_natural_key)
+    parent_rel = self.rel(target.parent) if target != self.root else ""
+    return {
+        "current_path": self.rel(target),
+        "parent": parent_rel,
+        "items": items,
+    }
+
+
+def _mkdir(self, rel: str, name: str) -> str:
+    if not name or name in (".", ".."):
+        raise InvalidNameError(f"invalid name: {name!r}")
+    if "/" in name or "\\" in name or "\x00" in name:
+        raise InvalidNameError(f"invalid characters in name: {name!r}")
+    parent = self.safe_path(rel)
+    if not parent.is_dir():
+        raise FileNotFoundError(rel)
+    new_dir = parent / name
+    new_dir.mkdir(exist_ok=True)
+    return self.rel(new_dir)
+
+
+RootedFS.browse = _browse  # type: ignore[attr-defined]
+RootedFS.mkdir = _mkdir  # type: ignore[attr-defined]

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ffmpeg_downloader.filesystem import PathTraversalError, RootedFS
+from ffmpeg_downloader.filesystem import InvalidNameError, PathTraversalError, RootedFS
 
 
 def test_safe_path_root(download_root: Path):
@@ -51,3 +51,85 @@ def test_safe_path_rejects_nul(download_root: Path):
     fs = RootedFS(download_root)
     with pytest.raises(PathTraversalError):
         fs.safe_path("Movies\x00.txt")
+
+
+def _seed(root: Path) -> None:
+    (root / "Movies").mkdir()
+    (root / "Movies" / "Office Space (1999)").mkdir()
+    (root / "Movies" / "10 Things").mkdir()
+    (root / "Music").mkdir()
+    (root / "README.txt").write_text("hi")
+
+
+def test_browse_root_lists_top_level(download_root: Path):
+    _seed(download_root)
+    fs = RootedFS(download_root)
+    result = fs.browse("")
+    assert result["current_path"] == ""
+    names = [i["name"] for i in result["items"]]
+    # directories first, then files; case-insensitive sort within each group
+    assert names == ["Movies", "Music", "README.txt"]
+    movies = next(i for i in result["items"] if i["name"] == "Movies")
+    assert movies["is_dir"] is True
+    assert movies["path"] == "Movies"
+
+
+def test_browse_subdirectory(download_root: Path):
+    _seed(download_root)
+    fs = RootedFS(download_root)
+    result = fs.browse("Movies")
+    assert result["current_path"] == "Movies"
+    names = [i["name"] for i in result["items"]]
+    assert names == ["10 Things", "Office Space (1999)"]
+
+
+def test_browse_rejects_traversal(download_root: Path):
+    fs = RootedFS(download_root)
+    with pytest.raises(PathTraversalError):
+        fs.browse("../etc")
+
+
+def test_browse_missing_path_raises_filenotfound(download_root: Path):
+    fs = RootedFS(download_root)
+    with pytest.raises(FileNotFoundError):
+        fs.browse("does/not/exist")
+
+
+def test_mkdir_creates_subfolder(download_root: Path):
+    fs = RootedFS(download_root)
+    new_rel = fs.mkdir("", "NewLibrary")
+    assert new_rel == "NewLibrary"
+    assert (download_root / "NewLibrary").is_dir()
+
+
+def test_mkdir_creates_nested(download_root: Path):
+    (download_root / "Movies").mkdir()
+    fs = RootedFS(download_root)
+    new_rel = fs.mkdir("Movies", "Foo (2024)")
+    assert new_rel == "Movies/Foo (2024)"
+    assert (download_root / "Movies" / "Foo (2024)").is_dir()
+
+
+def test_mkdir_rejects_separators(download_root: Path):
+    fs = RootedFS(download_root)
+    with pytest.raises(InvalidNameError):
+        fs.mkdir("", "with/slash")
+    with pytest.raises(InvalidNameError):
+        fs.mkdir("", "with\\backslash")
+
+
+def test_mkdir_rejects_dot_names(download_root: Path):
+    fs = RootedFS(download_root)
+    with pytest.raises(InvalidNameError):
+        fs.mkdir("", ".")
+    with pytest.raises(InvalidNameError):
+        fs.mkdir("", "..")
+    with pytest.raises(InvalidNameError):
+        fs.mkdir("", "")
+
+
+def test_mkdir_idempotent_returns_existing(download_root: Path):
+    (download_root / "Movies").mkdir()
+    fs = RootedFS(download_root)
+    out = fs.mkdir("", "Movies")
+    assert out == "Movies"
