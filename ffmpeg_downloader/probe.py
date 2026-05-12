@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import urljoin
+from dataclasses import dataclass, field
+from urllib.error import URLError
+from urllib.parse import urljoin, urlparse
+from urllib.request import Request, urlopen
 
 _ATTR_RE = re.compile(r'([A-Z0-9-]+)\s*=\s*(?:"([^"]*)"|([^,]*))(?:,\s*|$)')
 
@@ -88,3 +91,40 @@ def parse_master_playlist(body: str, base_url: str) -> list[dict]:
         )
     variants.sort(key=lambda v: v["bandwidth"], reverse=True)
     return variants
+
+
+class UnsupportedSchemeError(ValueError):
+    pass
+
+
+@dataclass
+class ProbeResult:
+    type: str  # "hls_master" | "hls_media" | "direct" | "unknown"
+    variants: list[dict] = field(default_factory=list)
+    duration_seconds: float | None = None
+    message: str | None = None
+
+
+def fetch_url(url: str, *, max_bytes: int = 256 * 1024, timeout: float = 10.0) -> str:
+    scheme = urlparse(url).scheme.lower()
+    if scheme not in ("http", "https"):
+        raise UnsupportedSchemeError(f"only http(s) allowed, got: {scheme}")
+    req = Request(url, headers={"User-Agent": "ffmpeg-downloader-probe/1.0"})
+    with urlopen(req, timeout=timeout) as resp:
+        data = resp.read(max_bytes)
+    return data.decode("utf-8", errors="replace")
+
+
+def probe_url(url: str, *, max_bytes: int = 256 * 1024, timeout: float = 10.0) -> ProbeResult:
+    """Fetch and classify a URL; return ProbeResult with variants if HLS master."""
+    try:
+        body = fetch_url(url, max_bytes=max_bytes, timeout=timeout)
+    except UnsupportedSchemeError as e:
+        return ProbeResult(type="unknown", message=str(e))
+    except (URLError, TimeoutError, OSError, ValueError) as e:
+        return ProbeResult(type="unknown", message=str(e))
+    kind = classify(body)
+    if kind == "hls_master":
+        variants = parse_master_playlist(body, base_url=url)
+        return ProbeResult(type=kind, variants=variants)
+    return ProbeResult(type=kind)

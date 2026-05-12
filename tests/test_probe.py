@@ -1,8 +1,19 @@
 from __future__ import annotations
 
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-from ffmpeg_downloader.probe import classify, parse_master_playlist
+import pytest
+
+from ffmpeg_downloader.probe import (
+    ProbeResult,
+    UnsupportedSchemeError,
+    classify,
+    fetch_url,
+    parse_master_playlist,
+    probe_url,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -60,3 +71,73 @@ def test_parse_master_handles_bom():
     body = "﻿" + (FIXTURES / "master-simple.m3u8").read_text()
     variants = parse_master_playlist(body, base_url="https://x.com/m.m3u8")
     assert len(variants) == 3
+
+
+class _StubHandler(BaseHTTPRequestHandler):
+    body_bytes = b""
+    delay = 0.0
+
+    def do_GET(self):  # noqa: N802 (BaseHTTPRequestHandler API)
+        if self.delay:
+            import time
+
+            time.sleep(self.delay)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/vnd.apple.mpegurl")
+        self.send_header("Content-Length", str(len(self.body_bytes)))
+        self.end_headers()
+        self.wfile.write(self.body_bytes)
+
+    def log_message(self, *_args):  # silence
+        return
+
+
+@pytest.fixture
+def stub_server():
+    server = HTTPServer(("127.0.0.1", 0), _StubHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def _url_for(server, path="/master.m3u8"):
+    host, port = server.server_address
+    return f"http://{host}:{port}{path}"
+
+
+def test_fetch_url_returns_body(stub_server):
+    _StubHandler.body_bytes = b"#EXTM3U\n"
+    body = fetch_url(_url_for(stub_server), max_bytes=1024, timeout=5.0)
+    assert body == "#EXTM3U\n"
+
+
+def test_fetch_url_caps_body(stub_server):
+    _StubHandler.body_bytes = b"x" * 1_000_000  # 1 MB
+    body = fetch_url(_url_for(stub_server), max_bytes=1024, timeout=5.0)
+    assert len(body) == 1024
+
+
+def test_fetch_url_rejects_bad_scheme():
+    with pytest.raises(UnsupportedSchemeError):
+        fetch_url("file:///etc/passwd", max_bytes=1024, timeout=5.0)
+
+
+def test_probe_url_classifies_master(stub_server):
+    _StubHandler.body_bytes = (FIXTURES / "master-simple.m3u8").read_bytes()
+    result = probe_url(_url_for(stub_server))
+    assert isinstance(result, ProbeResult)
+    assert result.type == "hls_master"
+    assert len(result.variants) == 3
+    # base_url propagated for relative URI resolution
+    assert result.variants[0]["url"].startswith("https://cdn.example.com/")
+
+
+def test_probe_url_unknown_on_fetch_failure():
+    result = probe_url("http://127.0.0.1:1/nope")  # port 1 closed
+    assert result.type == "unknown"
+    assert result.variants == []
+    assert result.message  # some error text
