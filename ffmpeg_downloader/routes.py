@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from flask import Flask, current_app, jsonify, request
+from flask import Flask, Response, current_app, jsonify, request, stream_with_context
 
 from . import probe as _probe
 from .ffmpeg_command import UnsupportedCodecError, UnsupportedSchemeError
@@ -161,3 +161,63 @@ def register(app: Flask) -> None:
             return jsonify({"ok": True})
         db.delete_job(job_id)
         return jsonify({"ok": True})
+
+    # ---- SSE ----
+    import json as _json
+    import queue as _queue
+
+    TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
+
+    def _format_event(event: str, data) -> str:
+        return f"event: {event}\ndata: {_json.dumps(data)}\n\n"
+
+    @app.get("/api/downloads/<job_id>/events")
+    def stream_job_events(job_id: str):
+        db = current_app.extensions["db"]
+        jm = current_app.extensions["jobs"]
+        job = db.get_job(job_id)
+        if not job:
+            return jsonify({"error": "not found"}), 404
+
+        def gen():
+            q = jm.subscribe(job_id)
+            try:
+                yield _format_event("status", job)
+                if job["status"] in TERMINAL_STATUSES:
+                    return
+                while True:
+                    try:
+                        ev = q.get(timeout=30)
+                    except _queue.Empty:
+                        yield ": keepalive\n\n"
+                        continue
+                    yield _format_event(ev["event"], ev["data"])
+                    if ev["event"] == "status" and ev["data"].get("status") in TERMINAL_STATUSES:
+                        return
+            finally:
+                jm.unsubscribe(job_id, q)
+
+        return Response(stream_with_context(gen()), mimetype="text/event-stream")
+
+    @app.get("/api/events")
+    def stream_global_events():
+        jm = current_app.extensions["jobs"]
+
+        def gen():
+            q = jm.subscribe_global()
+            try:
+                # Emit an initial keepalive so clients (and the WSGI test
+                # client) see headers/body immediately rather than blocking on
+                # the first queue.get().
+                yield ": keepalive\n\n"
+                while True:
+                    try:
+                        ev = q.get(timeout=30)
+                    except _queue.Empty:
+                        yield ": keepalive\n\n"
+                        continue
+                    yield _format_event(ev["event"], ev["data"])
+            finally:
+                jm.unsubscribe_global(q)
+
+        return Response(stream_with_context(gen()), mimetype="text/event-stream")

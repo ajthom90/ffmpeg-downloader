@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json as _json
 import threading
 import time as _time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -339,3 +340,60 @@ def test_delete_running_download_cancels(app, client, monkeypatch):
     d = client.delete(f"/api/downloads/{job_id}")
     assert d.status_code == 200
     _wait_for_job_status(app, job_id, "cancelled")
+
+
+def _parse_sse(chunk: bytes) -> list[dict]:
+    """Parse a chunk of SSE bytes into a list of {event, data} dicts."""
+    events = []
+    event_name = None
+    for raw in chunk.decode("utf-8", errors="replace").splitlines():
+        if raw.startswith("event:"):
+            event_name = raw[len("event:") :].strip()
+        elif raw.startswith("data:"):
+            data_str = raw[len("data:") :].strip()
+            try:
+                data = _json.loads(data_str)
+            except _json.JSONDecodeError:
+                data = data_str
+            events.append({"event": event_name, "data": data})
+            event_name = None
+        elif raw == "":
+            event_name = None
+    return events
+
+
+def test_per_job_sse_stream(app, client, monkeypatch):
+    monkeypatch.setenv("FAKE_FFMPEG_TICKS", "3")
+    monkeypatch.setenv("FAKE_FFMPEG_SLEEP", "0.05")
+    monkeypatch.setenv("FAKE_FFMPEG_EXIT", "0")
+    monkeypatch.setenv("FAKE_FFPROBE_DURATION", "10.0")
+    r = client.post(
+        "/api/downloads",
+        json={
+            "url": "https://example.com/x.mp4",
+            "filename": "sse",
+            "extension": "mp4",
+            "codec": "copy",
+            "output_folder": "",
+        },
+    )
+    job_id = r.get_json()["id"]
+    # Reading the streaming response until the connection closes.
+    with client.get(f"/api/downloads/{job_id}/events", buffered=False) as resp:
+        body = resp.get_data()
+    events = _parse_sse(body)
+    statuses = [e["data"]["status"] for e in events if e["event"] == "status"]
+    assert "completed" in statuses
+
+
+def test_global_sse_route_exists(client):
+    # We just verify the route is wired and content type is correct.
+    r = client.get(
+        "/api/events",
+        headers={"Accept": "text/event-stream"},
+        buffered=False,
+        follow_redirects=False,
+    )
+    assert r.status_code == 200
+    assert r.mimetype == "text/event-stream"
+    r.close()
