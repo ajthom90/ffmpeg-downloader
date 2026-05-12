@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import contextlib
+import os
 import re
+import subprocess
 import threading
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -134,3 +138,184 @@ class JobManager:
     def _run_job(self, job_id: str, argv: list[str], output_path: str) -> None:
         """Filled in by Task 13."""
         raise NotImplementedError
+
+
+def _parse_progress_line(line: str) -> tuple[str, str] | None:
+    if "=" not in line:
+        return None
+    key, _, value = line.partition("=")
+    return key.strip(), value.strip()
+
+
+def _probe_duration(ffprobe_bin: str, url: str, timeout: float = 10.0) -> float | None:
+    try:
+        proc = subprocess.run(
+            [
+                ffprobe_bin,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+                url,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+    if proc.returncode != 0:
+        return None
+    raw = proc.stdout.strip().splitlines()
+    if not raw:
+        return None
+    try:
+        return float(raw[0])
+    except ValueError:
+        return None
+
+
+def _read_stderr_in_background(proc: subprocess.Popen) -> callable:
+    """Drain stderr into a rolling buffer; return a getter for the latest 4KB."""
+    assert proc.stderr is not None
+    buf: deque[str] = deque(maxlen=4096)
+
+    def _reader():
+        assert proc.stderr is not None
+        for chunk in proc.stderr:
+            for ch in chunk:
+                buf.append(ch)
+
+    t = threading.Thread(target=_reader, daemon=True)
+    t.start()
+
+    def _get_tail() -> str:
+        t.join(timeout=1.0)
+        return "".join(buf).strip()
+
+    return _get_tail
+
+
+def _run_job_impl(self: JobManager, job_id: str, argv: list[str], output_path: str) -> None:
+    """The real body of _run_job, attached below."""
+    job_row = self._db.get_job(job_id)
+    if job_row is None:
+        return
+    input_url = job_row["selected_variant_url"] or job_row["url"]
+    duration = _probe_duration(self._ffprobe_bin, input_url)
+    now = int(time.time())
+    with self._db_lock:
+        self._db.update_job(job_id, status="running", started_at=now, duration_seconds=duration)
+    self._publish_status(job_id, "running")
+
+    try:
+        proc = subprocess.Popen(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+    except FileNotFoundError as e:
+        self._finalize(job_id, "failed", message=f"ffmpeg not found: {e}")
+        return
+
+    with self._lock:
+        self._procs[job_id] = proc
+
+    stderr_tail = _read_stderr_in_background(proc)
+
+    current_time = None
+    speed = None
+    try:
+        assert proc.stdout is not None
+        for raw_line in proc.stdout:
+            kv = _parse_progress_line(raw_line.strip())
+            if not kv:
+                continue
+            key, value = kv
+            if key == "out_time_us":
+                try:
+                    current_time = int(value) / 1_000_000.0
+                except ValueError:
+                    continue
+            elif key == "out_time_ms":  # older ffmpeg
+                try:
+                    current_time = int(value) / 1000.0
+                except ValueError:
+                    continue
+            elif key == "speed":
+                speed = value
+            elif key == "progress" and value == "end":
+                break
+
+            if current_time is not None:
+                pct = None
+                if duration and duration > 0:
+                    pct = min(100.0, max(0.0, current_time / duration * 100.0))
+                with self._db_lock:
+                    self._db.update_job(
+                        job_id,
+                        progress=pct,
+                        current_time_seconds=current_time,
+                        speed=speed,
+                    )
+                self._publish_progress(job_id, pct, current_time, speed)
+    finally:
+        proc.wait()
+        with self._lock:
+            self._procs.pop(job_id, None)
+
+    if job_id in self._cancelled:
+        with contextlib.suppress(OSError):
+            os.unlink(output_path)
+        self._finalize(job_id, "cancelled", message=None)
+        return
+    if proc.returncode == 0:
+        self._finalize(job_id, "completed", message=None, progress=100.0)
+    else:
+        tail = stderr_tail()
+        self._finalize(job_id, "failed", message=tail)
+
+
+def _finalize(
+    self: JobManager,
+    job_id: str,
+    status: str,
+    *,
+    message: str | None,
+    progress: float | None = None,
+) -> None:
+    fields: dict[str, Any] = {
+        "status": status,
+        "finished_at": int(time.time()),
+        "message": message,
+    }
+    if progress is not None:
+        fields["progress"] = progress
+    with self._db_lock:
+        self._db.update_job(job_id, **fields)
+    self._publish_status(job_id, status)
+
+
+def _publish_status(self: JobManager, job_id: str, status: str) -> None:
+    """No-op placeholder; Task 14 attaches the real pubsub."""
+    return
+
+
+def _publish_progress(
+    self: JobManager,
+    job_id: str,
+    progress: float | None,
+    current_time: float | None,
+    speed: str | None,
+) -> None:
+    return
+
+
+JobManager._run_job = _run_job_impl  # type: ignore[assignment]
+JobManager._finalize = _finalize  # type: ignore[assignment]
+JobManager._publish_status = _publish_status  # type: ignore[assignment]
+JobManager._publish_progress = _publish_progress  # type: ignore[assignment]

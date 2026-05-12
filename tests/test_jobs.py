@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -127,3 +128,82 @@ def test_submit_uses_variant_url_when_provided(jm: JobManager, db: Database):
     # The argv should reference the variant URL, not the master.
     assert "1080.m3u8" in persisted["command"]
     assert "master.m3u8" not in persisted["command"]
+
+
+def _wait_for_status(db, job_id, status, *, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    last = None
+    while time.monotonic() < deadline:
+        last = db.get_job(job_id)
+        if last and last["status"] == status:
+            return last
+        time.sleep(0.05)
+    raise AssertionError(
+        f"job {job_id} did not reach status {status!r} within {timeout}s; last={last}"
+    )
+
+
+def test_run_job_completes_successfully(jm, db, monkeypatch):
+    monkeypatch.setenv("FAKE_FFMPEG_TICKS", "2")
+    monkeypatch.setenv("FAKE_FFMPEG_SLEEP", "0.02")
+    monkeypatch.setenv("FAKE_FFMPEG_EXIT", "0")
+    monkeypatch.setenv("FAKE_FFPROBE_DURATION", "5.0")
+    job = jm.submit(
+        JobSpec(
+            url="https://example.com/x.mp4",
+            selected_variant_url=None,
+            selected_variant_label=None,
+            filename="ok",
+            extension="mp4",
+            codec="copy",
+            output_folder="",
+        )
+    )
+    done = _wait_for_status(db, job["id"], "completed")
+    # Either 100 (set at finalize) or the last parsed % — both acceptable.
+    assert done["progress"] is not None
+    assert done["finished_at"] is not None
+    assert done["duration_seconds"] == 5.0
+
+
+def test_run_job_failure_records_message(jm, db, monkeypatch):
+    monkeypatch.setenv("FAKE_FFMPEG_TICKS", "1")
+    monkeypatch.setenv("FAKE_FFMPEG_SLEEP", "0")
+    monkeypatch.setenv("FAKE_FFMPEG_EXIT", "1")
+    monkeypatch.setenv("FAKE_FFMPEG_STDERR", "boom: network error\n")
+    monkeypatch.delenv("FAKE_FFPROBE_DURATION", raising=False)  # ffprobe fails → no duration
+    job = jm.submit(
+        JobSpec(
+            url="https://example.com/x.mp4",
+            selected_variant_url=None,
+            selected_variant_label=None,
+            filename="fail",
+            extension="mp4",
+            codec="copy",
+            output_folder="",
+        )
+    )
+    failed = _wait_for_status(db, job["id"], "failed")
+    assert "boom" in (failed["message"] or "")
+    assert failed["duration_seconds"] is None
+
+
+def test_run_job_updates_progress(jm, db, monkeypatch):
+    monkeypatch.setenv("FAKE_FFMPEG_TICKS", "4")
+    monkeypatch.setenv("FAKE_FFMPEG_SLEEP", "0.05")
+    monkeypatch.setenv("FAKE_FFMPEG_EXIT", "0")
+    monkeypatch.setenv("FAKE_FFPROBE_DURATION", "10.0")
+    job = jm.submit(
+        JobSpec(
+            url="https://example.com/x.mp4",
+            selected_variant_url=None,
+            selected_variant_label=None,
+            filename="p",
+            extension="mp4",
+            codec="copy",
+            output_folder="",
+        )
+    )
+    done = _wait_for_status(db, job["id"], "completed", timeout=10)
+    assert done["current_time_seconds"] is not None
+    assert done["current_time_seconds"] >= 4.0  # 4 ticks at 1s each
