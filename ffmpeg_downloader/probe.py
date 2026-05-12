@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from urllib.error import URLError
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 from urllib.request import Request, urlopen
 
 _ATTR_RE = re.compile(r'([A-Z0-9-]+)\s*=\s*(?:"([^"]*)"|([^,]*))(?:,\s*|$)')
@@ -11,6 +11,30 @@ _ATTR_RE = re.compile(r'([A-Z0-9-]+)\s*=\s*(?:"([^"]*)"|([^,]*))(?:,\s*|$)')
 
 def _strip_bom(s: str) -> str:
     return s.lstrip("﻿")
+
+
+def _resolve_variant_url(base_url: str, uri: str) -> str:
+    """Resolve a variant URI against the master playlist URL.
+
+    Standard urljoin loses the query string when joining a bare relative URI to
+    a base that has one. Many HLS providers (Nebula, signed-token CDNs, etc.)
+    put auth tokens on the master URL and expect them to propagate to variant
+    URLs — ffmpeg does this when it resolves variants itself, so we match that.
+
+    Rules:
+      - Absolute variant URI → return as-is.
+      - Relative variant URI without its own query → inherit base's query.
+      - Relative variant URI with its own query → keep its query (don't merge).
+    """
+    joined = urljoin(base_url, uri)
+    base = urlparse(base_url)
+    if not base.query:
+        return joined
+    parsed_uri = urlparse(uri)
+    if parsed_uri.scheme or parsed_uri.query:
+        return joined
+    j = urlparse(joined)
+    return urlunparse(j._replace(query=base.query))
 
 
 def classify(body: str) -> str:
@@ -80,7 +104,7 @@ def parse_master_playlist(body: str, base_url: str) -> list[dict]:
             frame_rate = None
         variants.append(
             {
-                "url": urljoin(base_url, uri),
+                "url": _resolve_variant_url(base_url, uri),
                 "width": w,
                 "height": h,
                 "bandwidth": bw,

@@ -60,6 +60,27 @@ def test_parse_master_resolves_relative_uris():
     ]
 
 
+def test_parse_master_propagates_query_to_relative_variants():
+    """Auth-token-on-master providers (Nebula, signed CDNs) put the token on
+    the master playlist URL and expect ffmpeg to inherit it onto relative
+    variant URIs. Our parser must do the same."""
+    body = (FIXTURES / "master-relative-uris.m3u8").read_text()
+    variants = parse_master_playlist(
+        body, base_url="https://cdn.example.com/master.m3u8?token=abc123&v=1"
+    )
+    urls = [v["url"] for v in variants]
+    assert urls == [
+        "https://cdn.example.com/1080/index.m3u8?token=abc123&v=1",
+        "https://cdn.example.com/360/index.m3u8?token=abc123&v=1",
+    ]
+
+
+def test_parse_master_does_not_override_variant_query():
+    body = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=640x360\nv/360.m3u8?own=yes\n"
+    variants = parse_master_playlist(body, base_url="https://x.com/m.m3u8?token=abc")
+    assert variants[0]["url"] == "https://x.com/v/360.m3u8?own=yes"
+
+
 def test_parse_master_handles_missing_resolution():
     body = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=500000,CODECS="mp4a.40.2"\naudio.m3u8\n'
     variants = parse_master_playlist(body, base_url="https://x.com/master.m3u8")
