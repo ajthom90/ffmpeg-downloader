@@ -129,26 +129,36 @@ class ProbeResult:
     message: str | None = None
 
 
-def fetch_url(url: str, *, max_bytes: int = 256 * 1024, timeout: float = 10.0) -> str:
+def fetch_url(url: str, *, max_bytes: int = 256 * 1024, timeout: float = 10.0) -> tuple[str, str]:
+    """Fetch the URL and return (body, final_url).
+
+    `final_url` is the URL after any redirects — the right base for resolving
+    relative HLS variant URIs. Providers like Nebula 302-redirect the master
+    URL to a signed CDN URL, and variant URIs in the body are relative to
+    *that* redirected URL, not the user-supplied one.
+    """
     scheme = urlparse(url).scheme.lower()
     if scheme not in ("http", "https"):
         raise UnsupportedSchemeError(f"only http(s) allowed, got: {scheme}")
     req = Request(url, headers={"User-Agent": "ffmpeg-downloader-probe/1.0"})
     with urlopen(req, timeout=timeout) as resp:
         data = resp.read(max_bytes)
-    return data.decode("utf-8", errors="replace")
+        final_url = resp.geturl()
+    return data.decode("utf-8", errors="replace"), final_url
 
 
 def probe_url(url: str, *, max_bytes: int = 256 * 1024, timeout: float = 10.0) -> ProbeResult:
     """Fetch and classify a URL; return ProbeResult with variants if HLS master."""
     try:
-        body = fetch_url(url, max_bytes=max_bytes, timeout=timeout)
+        body, final_url = fetch_url(url, max_bytes=max_bytes, timeout=timeout)
     except UnsupportedSchemeError as e:
         return ProbeResult(type="unknown", message=str(e))
     except (URLError, TimeoutError, OSError, ValueError) as e:
         return ProbeResult(type="unknown", message=str(e))
     kind = classify(body)
     if kind == "hls_master":
-        variants = parse_master_playlist(body, base_url=url)
+        # Resolve variants against the post-redirect URL so providers that move
+        # auth between query string and path (Nebula → starlight.nebula.tv) work.
+        variants = parse_master_playlist(body, base_url=final_url)
         return ProbeResult(type=kind, variants=variants)
     return ProbeResult(type=kind)

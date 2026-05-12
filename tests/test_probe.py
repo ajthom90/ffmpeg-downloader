@@ -132,19 +132,65 @@ def _url_for(server, path="/master.m3u8"):
 
 def test_fetch_url_returns_body(stub_server):
     _StubHandler.body_bytes = b"#EXTM3U\n"
-    body = fetch_url(_url_for(stub_server), max_bytes=1024, timeout=5.0)
+    body, final_url = fetch_url(_url_for(stub_server), max_bytes=1024, timeout=5.0)
     assert body == "#EXTM3U\n"
+    assert final_url.startswith("http://127.0.0.1:")
 
 
 def test_fetch_url_caps_body(stub_server):
     _StubHandler.body_bytes = b"x" * 1_000_000  # 1 MB
-    body = fetch_url(_url_for(stub_server), max_bytes=1024, timeout=5.0)
+    body, _ = fetch_url(_url_for(stub_server), max_bytes=1024, timeout=5.0)
     assert len(body) == 1024
 
 
 def test_fetch_url_rejects_bad_scheme():
     with pytest.raises(UnsupportedSchemeError):
         fetch_url("file:///etc/passwd", max_bytes=1024, timeout=5.0)
+
+
+class _RedirectingHandler(BaseHTTPRequestHandler):
+    """Handler that redirects /master to /redirected then serves a master playlist."""
+
+    redirect_target = ""
+    body_bytes = b""
+
+    def do_GET(self):  # noqa: N802
+        if self.path == "/master.m3u8":
+            self.send_response(302)
+            self.send_header("Location", self.redirect_target)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/vnd.apple.mpegurl")
+        self.send_header("Content-Length", str(len(self.body_bytes)))
+        self.end_headers()
+        self.wfile.write(self.body_bytes)
+
+    def log_message(self, *_args):
+        return
+
+
+def test_probe_url_resolves_variants_against_redirect_target():
+    """A 302 from the user-supplied master URL to a CDN URL must cause variants
+    to be resolved against the CDN URL — matches ffmpeg's HLS resolution."""
+    server = HTTPServer(("127.0.0.1", 0), _RedirectingHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        host, port = server.server_address
+        _RedirectingHandler.redirect_target = f"http://{host}:{port}/cdn/v/show/all.m3u8"
+        _RedirectingHandler.body_bytes = (
+            b"#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=640x360\nvariants/360.m3u8\n"
+        )
+        result = probe_url(f"http://{host}:{port}/master.m3u8")
+        assert result.type == "hls_master"
+        assert len(result.variants) == 1
+        # The variant URL must point at the redirected base (under /cdn/v/show/)
+        # not the original /master.m3u8.
+        assert result.variants[0]["url"] == (f"http://{host}:{port}/cdn/v/show/variants/360.m3u8")
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
 
 
 def test_probe_url_classifies_master(stub_server):
