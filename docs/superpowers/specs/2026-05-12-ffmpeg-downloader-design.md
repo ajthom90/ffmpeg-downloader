@@ -82,6 +82,8 @@ All via env vars, surfaced as a single `Config` dataclass.
 | `JOB_RETENTION_DAYS` | `30` | Completed / failed / cancelled jobs older than this are deleted on startup. |
 | `SEARCH_CACHE_TTL_SECONDS` | `60` | TTL on the recursive-search folder cache. |
 | `SEARCH_RESULT_LIMIT` | `50` | Max recursive-search results returned. |
+| `FFMPEG_BIN` | `ffmpeg` | Path to the ffmpeg binary. Tests point this at a shim script. |
+| `FFPROBE_BIN` | `ffprobe` | Path to the ffprobe binary. Tests point this at a shim script. |
 
 Startup invariants (all fatal if violated):
 - `DOWNLOAD_ROOT` exists, is a directory, and is writable.
