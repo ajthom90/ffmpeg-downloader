@@ -1,6 +1,9 @@
 // ffmpeg_downloader/static/app.js
 // Vanilla JS, ES modules, no framework.
 
+import "./folder-picker.js";
+import "./resolution-picker.js";
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -248,8 +251,3 @@ function attachGlobalStream() {
     console.error("Failed to load existing jobs", err);
   }
 })();
-
-// Folder picker + URL probe modules are loaded lazily; Task 24 will replace these
-// dynamic imports with static ones.
-import("./folder-picker.js").catch(() => {});
-import("./resolution-picker.js").catch(() => {});
