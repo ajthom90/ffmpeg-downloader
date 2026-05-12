@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ffmpeg-downloader"
+version = "0.1.0"
+description = "Self-hosted Flask app for downloading m3u8 streams via ffmpeg"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "AJ Thom", email = "ajthom90@gmail.com" }]
+dependencies = [
+    "Flask>=3.0,<4",
+    "gunicorn>=22.0,<24",
+    "python-ulid>=2.7,<4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9",
+    "pytest-timeout>=2.3,<3",
+    "ruff>=0.6,<1",
+]
+
+[project.urls]
+Homepage = "https://github.com/ajthom90/ffmpeg-downloader"
+
+[tool.setuptools.packages.find]
+include = ["ffmpeg_downloader*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+
+[tool.pytest.ini_options]
+addopts = "-q --tb=short --strict-markers"
+testpaths = ["tests"]
+timeout = 30
