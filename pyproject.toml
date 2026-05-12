@@ -14,6 +14,9 @@ dependencies = [
     "Flask>=3.0,<4",
     "gunicorn>=22.0,<24",
     "python-ulid>=2.7,<4",
+    # python-ulid 3.x unconditionally imports `Self` from `typing_extensions`
+    # even on Python 3.11+ where it lives in stdlib `typing`. Pin explicitly.
+    "typing_extensions>=4.0",
 ]
 
 [project.optional-dependencies]
