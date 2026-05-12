@@ -286,3 +286,32 @@ def test_global_subscriber_receives_all_jobs(jm, db, monkeypatch):
         if ev["event"] == "job" and ev["data"]["status"] == "completed":
             job_ids.add(ev["data"]["id"])
     assert len(job_ids) == 2
+
+
+def test_cancel_running_job(jm, db, download_root, monkeypatch):
+    monkeypatch.setenv("FAKE_FFMPEG_TICKS", "50")
+    monkeypatch.setenv("FAKE_FFMPEG_SLEEP", "0.1")
+    monkeypatch.setenv("FAKE_FFMPEG_EXIT", "0")
+    monkeypatch.setenv("FAKE_FFPROBE_DURATION", "100.0")
+    job = jm.submit(
+        JobSpec(
+            url="https://example.com/x.mp4",
+            selected_variant_url=None,
+            selected_variant_label=None,
+            filename="cancel",
+            extension="mp4",
+            codec="copy",
+            output_folder="",
+        )
+    )
+    # Wait until the job is running, then cancel.
+    _wait_for_status(db, job["id"], "running", timeout=5)
+    jm.cancel(job["id"])
+    cancelled = _wait_for_status(db, job["id"], "cancelled", timeout=10)
+    assert cancelled["finished_at"] is not None
+    # Partial output file should be cleaned up.
+    assert not (download_root / "cancel.mp4").exists()
+
+
+def test_cancel_unknown_job_is_noop(jm):
+    jm.cancel("j_doesnotexist")  # must not raise

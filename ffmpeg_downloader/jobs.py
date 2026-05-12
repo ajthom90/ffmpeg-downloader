@@ -406,3 +406,30 @@ def _attach_pubsub() -> None:
 
 
 _attach_pubsub()
+
+
+def _cancel(self: JobManager, job_id: str) -> None:
+    with self._lock:
+        proc = self._procs.get(job_id)
+        if not proc:
+            # Either not running, or finished. Mark cancelled only if still queued.
+            with self._db_lock:
+                row = self._db.get_job(job_id)
+            if row and row["status"] == "queued":
+                self._cancelled.add(job_id)
+                self._finalize(job_id, "cancelled", message=None)
+            return
+        self._cancelled.add(job_id)
+    try:
+        proc.terminate()
+    except ProcessLookupError:
+        return
+    try:
+        proc.wait(timeout=5.0)
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        proc.wait(timeout=2.0)
+
+
+JobManager.cancel = _cancel  # type: ignore[assignment]
