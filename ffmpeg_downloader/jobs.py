@@ -236,14 +236,12 @@ def _run_job_impl(self: JobManager, job_id: str, argv: list[str], output_path: s
             if not kv:
                 continue
             key, value = kv
-            if key == "out_time_us":
+            # ffmpeg's progress block emits both keys; both are in microseconds
+            # despite the name `out_time_ms` (long-standing ffmpeg quirk). Treat
+            # them the same — whichever arrives first wins, the other is a no-op.
+            if key in ("out_time_us", "out_time_ms"):
                 try:
                     current_time = int(value) / 1_000_000.0
-                except ValueError:
-                    continue
-            elif key == "out_time_ms":  # older ffmpeg
-                try:
-                    current_time = int(value) / 1000.0
                 except ValueError:
                     continue
             elif key == "speed":
