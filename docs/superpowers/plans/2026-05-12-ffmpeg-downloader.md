@@ -99,6 +99,9 @@ dependencies = [
     "Flask>=3.0,<4",
     "gunicorn>=22.0,<24",
     "python-ulid>=2.7,<4",
+    # python-ulid 3.x unconditionally imports `Self` from `typing_extensions`
+    # even on Python 3.11+ where it lives in stdlib `typing`. Pin explicitly.
+    "typing_extensions>=4.0",
 ]
 
 [project.optional-dependencies]
@@ -157,8 +160,6 @@ def create_app(config_overrides: dict | None = None):
 # tests/conftest.py
 from __future__ import annotations
 
-import os
-import shutil
 import stat
 from pathlib import Path
 
@@ -479,10 +480,11 @@ def test_delete_job(data_dir: Path):
 
 def test_reconcile_marks_running_jobs_failed(data_dir: Path):
     db = Database.open(data_dir / "jobs.db")
+    now = 1_000_000_000
     db.insert_job(_make_job_row(id="j_q", status="queued"))
     db.insert_job(_make_job_row(id="j_r", status="running"))
-    db.insert_job(_make_job_row(id="j_done", status="completed", finished_at=10))
-    db.reconcile_on_startup(now=1_000_000_000, retention_days=30)
+    db.insert_job(_make_job_row(id="j_done", status="completed", finished_at=now - 100))
+    db.reconcile_on_startup(now=now, retention_days=30)
     assert db.get_job("j_q")["status"] == "failed"
     assert db.get_job("j_r")["status"] == "failed"
     assert db.get_job("j_done")["status"] == "completed"
@@ -637,7 +639,6 @@ git commit -m "Add SQLite Database layer with job CRUD and startup reconciliatio
 # tests/test_filesystem.py
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -734,6 +735,15 @@ class RootedFS:
         cleaned = rel.lstrip("/")
         if cleaned in ("", "."):
             return self.root
+        # Defensive: a real absolute path outside root (e.g. "/var/folders/.../outside")
+        # would otherwise be lstrip'd and silently joined under root. If the absolute
+        # form points to a real filesystem entity outside root, reject it.
+        if os.path.isabs(rel):
+            abs_path = Path(rel)
+            if abs_path.exists():
+                resolved_abs = abs_path.resolve()
+                if resolved_abs != self.root and self.root not in resolved_abs.parents:
+                    raise PathTraversalError(f"path escapes root: {rel!r}")
         candidate = (self.root / cleaned).resolve()
         if candidate != self.root and self.root not in candidate.parents:
             raise PathTraversalError(f"path escapes root: {rel!r}")
@@ -1278,6 +1288,12 @@ class RootedFS:
         cleaned = rel.lstrip("/")
         if cleaned in ("", "."):
             return self.root
+        if os.path.isabs(rel):
+            abs_path = Path(rel)
+            if abs_path.exists():
+                resolved_abs = abs_path.resolve()
+                if resolved_abs != self.root and self.root not in resolved_abs.parents:
+                    raise PathTraversalError(f"path escapes root: {rel!r}")
         candidate = (self.root / cleaned).resolve()
         if candidate != self.root and self.root not in candidate.parents:
             raise PathTraversalError(f"path escapes root: {rel!r}")
@@ -1695,8 +1711,6 @@ seg1.ts
 from __future__ import annotations
 
 from pathlib import Path
-
-import pytest
 
 from ffmpeg_downloader.probe import classify, parse_master_playlist
 
@@ -2834,7 +2848,9 @@ class _Pubsub:
         envelope = {"event": event, "data": data}
         with self._lock:
             subscribers = list(self._per_job.get(job_id, []))
-            global_subs = list(self._global)
+            # Only forward state transitions to the global stream — list-view
+            # subscribers don't need per-tick progress micro-updates.
+            global_subs = list(self._global) if event == "status" else []
         for q in subscribers:
             q.put(envelope)
         for q in global_subs:
@@ -5166,7 +5182,7 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY pyproject.toml ./
+COPY pyproject.toml README.md ./
 RUN pip install --no-cache-dir .
 
 COPY ffmpeg_downloader ./ffmpeg_downloader
