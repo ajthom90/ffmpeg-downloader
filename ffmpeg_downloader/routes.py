@@ -5,7 +5,9 @@ from urllib.parse import urlparse
 from flask import Flask, current_app, jsonify, request
 
 from . import probe as _probe
+from .ffmpeg_command import UnsupportedCodecError, UnsupportedSchemeError
 from .filesystem import InvalidNameError, PathTraversalError, RootedFS
+from .jobs import JobSpec
 
 
 def _fs() -> RootedFS:
@@ -89,3 +91,73 @@ def register(app: Flask) -> None:
                 "message": result.message,
             }
         )
+
+    @app.post("/api/downloads")
+    def create_download():
+        if not request.is_json:
+            return jsonify({"error": "json body required"}), 400
+        body = request.get_json(silent=True) or {}
+        try:
+            url = body["url"]
+            filename = body["filename"]
+            extension = body["extension"]
+            codec = body["codec"]
+            output_folder = body.get("output_folder", "")
+        except KeyError as e:
+            return jsonify({"error": f"missing field: {e.args[0]}"}), 400
+
+        # Scheme guard before touching JobManager.
+        for u in (url, body.get("selected_variant_url") or ""):
+            if not u:
+                continue
+            scheme = urlparse(u).scheme.lower()
+            if scheme not in ("http", "https"):
+                return jsonify({"error": f"unsupported scheme: {scheme}"}), 400
+
+        try:
+            _fs().safe_path(output_folder or "")  # traversal pre-check
+        except PathTraversalError as e:
+            return jsonify({"error": str(e)}), 400
+
+        jm = current_app.extensions["jobs"]
+        spec = JobSpec(
+            url=url,
+            selected_variant_url=body.get("selected_variant_url") or None,
+            selected_variant_label=body.get("selected_variant_label") or None,
+            filename=filename,
+            extension=extension,
+            codec=codec,
+            output_folder=output_folder,
+        )
+        try:
+            job = jm.submit(spec)
+        except (UnsupportedCodecError, UnsupportedSchemeError) as e:
+            return jsonify({"error": str(e)}), 400
+        return jsonify(job), 201
+
+    @app.get("/api/downloads")
+    def list_downloads():
+        limit = min(int(request.args.get("limit", "50")), 200)
+        db = current_app.extensions["db"]
+        return jsonify(db.list_jobs(limit=limit))
+
+    @app.get("/api/downloads/<job_id>")
+    def get_download(job_id: str):
+        db = current_app.extensions["db"]
+        job = db.get_job(job_id)
+        if not job:
+            return jsonify({"error": "not found"}), 404
+        return jsonify(job)
+
+    @app.delete("/api/downloads/<job_id>")
+    def delete_download(job_id: str):
+        db = current_app.extensions["db"]
+        jm = current_app.extensions["jobs"]
+        job = db.get_job(job_id)
+        if not job:
+            return jsonify({"error": "not found"}), 404
+        if job["status"] in ("queued", "running"):
+            jm.cancel(job_id)
+            return jsonify({"ok": True})
+        db.delete_job(job_id)
+        return jsonify({"ok": True})

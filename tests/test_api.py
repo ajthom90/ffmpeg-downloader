@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time as _time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -167,3 +168,174 @@ def test_probe_unsupported_scheme(client):
 def test_probe_requires_url(client):
     r = client.post("/api/probe", json={})
     assert r.status_code == 400
+
+
+def _wait_for_job_status(app, job_id, status, timeout=8.0):
+    db = app.extensions["db"]
+    deadline = _time.monotonic() + timeout
+    last = None
+    while _time.monotonic() < deadline:
+        last = db.get_job(job_id)
+        if last and last["status"] == status:
+            return last
+        _time.sleep(0.05)
+    raise AssertionError(f"{job_id} did not reach {status}; last = {last}")
+
+
+def test_post_download_creates_queued_job(app, client, monkeypatch):
+    monkeypatch.setenv("FAKE_FFMPEG_TICKS", "1")
+    monkeypatch.setenv("FAKE_FFMPEG_SLEEP", "0")
+    monkeypatch.setenv("FAKE_FFMPEG_EXIT", "0")
+    monkeypatch.setenv("FAKE_FFPROBE_DURATION", "1.0")
+    r = client.post(
+        "/api/downloads",
+        json={
+            "url": "https://example.com/x.mp4",
+            "filename": "hello",
+            "extension": "mp4",
+            "codec": "copy",
+            "output_folder": "",
+        },
+    )
+    assert r.status_code == 201
+    job = r.get_json()
+    assert job["id"].startswith("j_")
+    assert job["status"] in ("queued", "running", "completed")
+    _wait_for_job_status(app, job["id"], "completed")
+
+
+def test_post_download_rejects_bad_scheme(client):
+    r = client.post(
+        "/api/downloads",
+        json={
+            "url": "file:///etc/passwd",
+            "filename": "x",
+            "extension": "mp4",
+            "codec": "copy",
+            "output_folder": "",
+        },
+    )
+    assert r.status_code == 400
+
+
+def test_post_download_rejects_unknown_codec(client):
+    r = client.post(
+        "/api/downloads",
+        json={
+            "url": "https://example.com/x.mp4",
+            "filename": "x",
+            "extension": "mp4",
+            "codec": "banana",
+            "output_folder": "",
+        },
+    )
+    assert r.status_code == 400
+
+
+def test_post_download_rejects_traversal_output_folder(client):
+    r = client.post(
+        "/api/downloads",
+        json={
+            "url": "https://example.com/x.mp4",
+            "filename": "x",
+            "extension": "mp4",
+            "codec": "copy",
+            "output_folder": "../etc",
+        },
+    )
+    assert r.status_code == 400
+
+
+def test_list_downloads(app, client, monkeypatch):
+    monkeypatch.setenv("FAKE_FFMPEG_TICKS", "1")
+    monkeypatch.setenv("FAKE_FFMPEG_SLEEP", "0")
+    monkeypatch.setenv("FAKE_FFMPEG_EXIT", "0")
+    monkeypatch.setenv("FAKE_FFPROBE_DURATION", "1.0")
+    for n in range(3):
+        r = client.post(
+            "/api/downloads",
+            json={
+                "url": f"https://example.com/{n}.mp4",
+                "filename": f"f{n}",
+                "extension": "mp4",
+                "codec": "copy",
+                "output_folder": "",
+            },
+        )
+        _wait_for_job_status(app, r.get_json()["id"], "completed")
+    r = client.get("/api/downloads?limit=10")
+    body = r.get_json()
+    assert len(body) == 3
+    assert body[0]["filename"] in ("f0.mp4", "f1.mp4", "f2.mp4")
+
+
+def test_get_one_download(app, client, monkeypatch):
+    monkeypatch.setenv("FAKE_FFMPEG_TICKS", "1")
+    monkeypatch.setenv("FAKE_FFMPEG_SLEEP", "0")
+    monkeypatch.setenv("FAKE_FFMPEG_EXIT", "0")
+    monkeypatch.setenv("FAKE_FFPROBE_DURATION", "1.0")
+    r = client.post(
+        "/api/downloads",
+        json={
+            "url": "https://example.com/x.mp4",
+            "filename": "single",
+            "extension": "mp4",
+            "codec": "copy",
+            "output_folder": "",
+        },
+    )
+    job_id = r.get_json()["id"]
+    _wait_for_job_status(app, job_id, "completed")
+    r2 = client.get(f"/api/downloads/{job_id}")
+    assert r2.status_code == 200
+    assert r2.get_json()["id"] == job_id
+
+
+def test_get_unknown_download_404(client):
+    r = client.get("/api/downloads/j_nope")
+    assert r.status_code == 404
+
+
+def test_delete_terminal_download(app, client, monkeypatch):
+    monkeypatch.setenv("FAKE_FFMPEG_TICKS", "1")
+    monkeypatch.setenv("FAKE_FFMPEG_SLEEP", "0")
+    monkeypatch.setenv("FAKE_FFMPEG_EXIT", "0")
+    monkeypatch.setenv("FAKE_FFPROBE_DURATION", "1.0")
+    r = client.post(
+        "/api/downloads",
+        json={
+            "url": "https://example.com/x.mp4",
+            "filename": "del",
+            "extension": "mp4",
+            "codec": "copy",
+            "output_folder": "",
+        },
+    )
+    job_id = r.get_json()["id"]
+    _wait_for_job_status(app, job_id, "completed")
+    d = client.delete(f"/api/downloads/{job_id}")
+    assert d.status_code == 200
+    r2 = client.get(f"/api/downloads/{job_id}")
+    assert r2.status_code == 404
+
+
+def test_delete_running_download_cancels(app, client, monkeypatch):
+    monkeypatch.setenv("FAKE_FFMPEG_TICKS", "50")
+    monkeypatch.setenv("FAKE_FFMPEG_SLEEP", "0.1")
+    monkeypatch.setenv("FAKE_FFMPEG_EXIT", "0")
+    monkeypatch.setenv("FAKE_FFPROBE_DURATION", "100.0")
+    r = client.post(
+        "/api/downloads",
+        json={
+            "url": "https://example.com/x.mp4",
+            "filename": "cancelme",
+            "extension": "mp4",
+            "codec": "copy",
+            "output_folder": "",
+        },
+    )
+    job_id = r.get_json()["id"]
+    _wait_for_job_status(app, job_id, "running")
+    d = client.delete(f"/api/downloads/{job_id}")
+    assert d.status_code == 200
+    _wait_for_job_status(app, job_id, "cancelled")
