@@ -207,3 +207,82 @@ def test_run_job_updates_progress(jm, db, monkeypatch):
     done = _wait_for_status(db, job["id"], "completed", timeout=10)
     assert done["current_time_seconds"] is not None
     assert done["current_time_seconds"] >= 4.0  # 4 ticks at 1s each
+
+
+import queue  # noqa: E402
+
+
+def test_pubsub_delivers_progress_and_status_events(jm, db, monkeypatch):
+    monkeypatch.setenv("FAKE_FFMPEG_TICKS", "2")
+    monkeypatch.setenv("FAKE_FFMPEG_SLEEP", "0.05")
+    monkeypatch.setenv("FAKE_FFMPEG_EXIT", "0")
+    monkeypatch.setenv("FAKE_FFPROBE_DURATION", "10.0")
+    job = jm.submit(
+        JobSpec(
+            url="https://example.com/x.mp4",
+            selected_variant_url=None,
+            selected_variant_label=None,
+            filename="pubsub",
+            extension="mp4",
+            codec="copy",
+            output_folder="",
+        )
+    )
+    q: queue.Queue = jm.subscribe(job["id"])
+    seen_status = []
+    seen_progress = 0
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            ev = q.get(timeout=0.5)
+        except queue.Empty:
+            continue
+        if ev["event"] == "status":
+            seen_status.append(ev["data"]["status"])
+            if ev["data"]["status"] in ("completed", "failed", "cancelled"):
+                break
+        elif ev["event"] == "progress":
+            seen_progress += 1
+    assert "running" in seen_status
+    assert "completed" in seen_status
+    assert seen_progress >= 1
+
+
+def test_global_subscriber_receives_all_jobs(jm, db, monkeypatch):
+    monkeypatch.setenv("FAKE_FFMPEG_TICKS", "1")
+    monkeypatch.setenv("FAKE_FFMPEG_SLEEP", "0.0")
+    monkeypatch.setenv("FAKE_FFMPEG_EXIT", "0")
+    monkeypatch.setenv("FAKE_FFPROBE_DURATION", "1.0")
+    q = jm.subscribe_global()
+    jm.submit(
+        JobSpec(
+            url="https://example.com/a.mp4",
+            selected_variant_url=None,
+            selected_variant_label=None,
+            filename="a",
+            extension="mp4",
+            codec="copy",
+            output_folder="",
+        )
+    )
+    jm.submit(
+        JobSpec(
+            url="https://example.com/b.mp4",
+            selected_variant_url=None,
+            selected_variant_label=None,
+            filename="b",
+            extension="mp4",
+            codec="copy",
+            output_folder="",
+        )
+    )
+    job_ids: set[str] = set()
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and len(job_ids) < 2:
+        try:
+            ev = q.get(timeout=0.5)
+        except queue.Empty:
+            continue
+        if ev["event"] == "job" and ev["data"]["status"] == "completed":
+            job_ids.add(ev["data"]["id"])
+    assert len(job_ids) == 2

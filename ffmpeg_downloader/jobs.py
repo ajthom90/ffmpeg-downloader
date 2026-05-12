@@ -319,3 +319,90 @@ JobManager._run_job = _run_job_impl  # type: ignore[assignment]
 JobManager._finalize = _finalize  # type: ignore[assignment]
 JobManager._publish_status = _publish_status  # type: ignore[assignment]
 JobManager._publish_progress = _publish_progress  # type: ignore[assignment]
+
+
+import queue as _queue  # noqa: E402
+
+
+class _Pubsub:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._per_job: dict[str, list[_queue.Queue]] = {}
+        self._global: list[_queue.Queue] = []
+
+    def subscribe_job(self, job_id: str) -> _queue.Queue:
+        q: _queue.Queue = _queue.Queue()
+        with self._lock:
+            self._per_job.setdefault(job_id, []).append(q)
+        return q
+
+    def subscribe_global(self) -> _queue.Queue:
+        q: _queue.Queue = _queue.Queue()
+        with self._lock:
+            self._global.append(q)
+        return q
+
+    def unsubscribe_job(self, job_id: str, q: _queue.Queue) -> None:
+        with self._lock:
+            if job_id in self._per_job and q in self._per_job[job_id]:
+                self._per_job[job_id].remove(q)
+
+    def unsubscribe_global(self, q: _queue.Queue) -> None:
+        with self._lock:
+            if q in self._global:
+                self._global.remove(q)
+
+    def publish_job(self, job_id: str, event: str, data: dict) -> None:
+        envelope = {"event": event, "data": data}
+        with self._lock:
+            subscribers = list(self._per_job.get(job_id, []))
+            global_subs = list(self._global) if event == "status" else []
+        for q in subscribers:
+            q.put(envelope)
+        for q in global_subs:
+            q.put({"event": "job", "data": data})
+
+
+def _attach_pubsub() -> None:
+    original_init = JobManager.__init__
+
+    def __init__(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        self._pubsub = _Pubsub()
+
+    def subscribe(self, job_id: str) -> _queue.Queue:
+        return self._pubsub.subscribe_job(job_id)
+
+    def subscribe_global(self) -> _queue.Queue:
+        return self._pubsub.subscribe_global()
+
+    def unsubscribe(self, job_id: str, q: _queue.Queue) -> None:
+        self._pubsub.unsubscribe_job(job_id, q)
+
+    def unsubscribe_global(self, q: _queue.Queue) -> None:
+        self._pubsub.unsubscribe_global(q)
+
+    def _publish_status(self, job_id: str, status: str) -> None:
+        with self._db_lock:
+            row = self._db.get_job(job_id)
+        if row:
+            self._pubsub.publish_job(job_id, "status", row)
+
+    def _publish_progress(self, job_id: str, progress, current_time, speed) -> None:
+        payload = {
+            "progress": progress,
+            "current_time_seconds": current_time,
+            "speed": speed,
+        }
+        self._pubsub.publish_job(job_id, "progress", payload)
+
+    JobManager.__init__ = __init__  # type: ignore[assignment]
+    JobManager.subscribe = subscribe  # type: ignore[attr-defined]
+    JobManager.subscribe_global = subscribe_global  # type: ignore[attr-defined]
+    JobManager.unsubscribe = unsubscribe  # type: ignore[attr-defined]
+    JobManager.unsubscribe_global = unsubscribe_global  # type: ignore[attr-defined]
+    JobManager._publish_status = _publish_status  # type: ignore[assignment]
+    JobManager._publish_progress = _publish_progress  # type: ignore[assignment]
+
+
+_attach_pubsub()
