@@ -1,0 +1,16 @@
+services:
+  ffmpeg-downloader:
+    image: ghcr.io/ajthom90/ffmpeg-downloader:latest
+    container_name: ffmpeg-downloader
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # Replace /path/to/your/media with the host directory you want to browse.
+      - /path/to/your/media:/downloads
+      - ./data:/data
+    environment:
+      - MAX_CONCURRENT_JOBS=2
+      # Optional overrides:
+      # - JOB_RETENTION_DAYS=30
+      # - SEARCH_CACHE_TTL_SECONDS=60
