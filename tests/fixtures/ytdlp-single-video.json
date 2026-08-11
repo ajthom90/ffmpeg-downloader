@@ -1,0 +1,15 @@
+{
+  "_type": "video",
+  "id": "dQw4w9WgXcQ",
+  "title": "Sample Video Title",
+  "extractor": "youtube",
+  "webpage_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "duration": 212,
+  "formats": [
+    {"format_id": "18", "ext": "mp4", "height": 360, "vcodec": "avc1", "acodec": "mp4a", "tbr": 500},
+    {"format_id": "137", "ext": "mp4", "height": 1080, "vcodec": "avc1", "acodec": "none", "tbr": 2500},
+    {"format_id": "136", "ext": "mp4", "height": 720, "vcodec": "avc1", "acodec": "none", "tbr": 1500},
+    {"format_id": "140", "ext": "m4a", "height": null, "vcodec": "none", "acodec": "mp4a", "tbr": 128},
+    {"format_id": "22", "ext": "mp4", "height": 720, "vcodec": "avc1", "acodec": "mp4a", "tbr": 800}
+  ]
+}

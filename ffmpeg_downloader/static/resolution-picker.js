@@ -4,13 +4,19 @@ const urlInput = document.getElementById("urlInput");
 const urlHint = document.getElementById("urlHint");
 const resolutionGroup = document.getElementById("resolutionGroup");
 const resolutionSelect = document.getElementById("resolutionSelect");
+const resolutionLabel = document.getElementById("resolutionLabel");
 const audioGroup = document.getElementById("audioGroup");
 const audioList = document.getElementById("audioList");
 const subtitleGroup = document.getElementById("subtitleGroup");
 const subtitleList = document.getElementById("subtitleList");
+const codecSelect = document.getElementById("codecSelect");
+const codecHint = document.getElementById("codecHint");
+const submitBtn = document.getElementById("submitBtn");
 
 let probeDebounce = null;
 let lastProbedUrl = "";
+/** @type {"ffmpeg" | "ytdlp" | null} */
+let probeMode = null;
 
 urlInput.addEventListener("input", () => {
   clearTimeout(probeDebounce);
@@ -19,6 +25,9 @@ urlInput.addEventListener("input", () => {
     hideAllPickers();
     urlHint.textContent = "";
     lastProbedUrl = "";
+    setCodecEnabled(true);
+    setSubmitBlocked(false);
+    probeMode = null;
     return;
   }
   probeDebounce = setTimeout(() => probe(value), 500);
@@ -27,6 +36,7 @@ urlInput.addEventListener("input", () => {
 export function hideAllPickers() {
   resolutionGroup.setAttribute("hidden", "");
   resolutionSelect.replaceChildren();
+  if (resolutionLabel) resolutionLabel.textContent = "Video resolution";
   audioGroup.setAttribute("hidden", "");
   audioList.replaceChildren();
   subtitleGroup.setAttribute("hidden", "");
@@ -35,6 +45,34 @@ export function hideAllPickers() {
 
 // Back-compat alias for app.js callers.
 export const hideResolutionGroup = hideAllPickers;
+
+export function getDownloadBackend() {
+  return probeMode === "ytdlp" ? "ytdlp" : "ffmpeg";
+}
+
+export function getSelectedFormat() {
+  if (probeMode !== "ytdlp") return null;
+  const opt = resolutionSelect.selectedOptions[0];
+  if (!opt) {
+    return { format_selector: "bv*+ba/b", format_label: "Best available" };
+  }
+  return {
+    format_selector: opt.value || "bv*+ba/b",
+    format_label: opt.dataset.label || opt.textContent,
+  };
+}
+
+function setCodecEnabled(on) {
+  if (codecSelect) codecSelect.disabled = !on;
+  if (codecHint) {
+    if (on) codecHint.setAttribute("hidden", "");
+    else codecHint.removeAttribute("hidden");
+  }
+}
+
+function setSubmitBlocked(blocked) {
+  if (submitBtn) submitBtn.disabled = !!blocked;
+}
 
 async function probe(url) {
   if (url === lastProbedUrl) return;
@@ -50,9 +88,30 @@ async function probe(url) {
     if (!resp.ok) {
       urlHint.textContent = body.error || "Inspect failed";
       hideAllPickers();
+      setCodecEnabled(true);
+      setSubmitBlocked(false);
+      probeMode = null;
       return;
     }
-    if (body.type === "hls_master" && body.variants && body.variants.length > 0) {
+    if (body.type === "extractor" && body.formats && body.formats.length) {
+      populateExtractorFormats(body.formats);
+      urlHint.textContent = body.extractor
+        ? `Detected ${body.extractor} — choose quality`
+        : "Site video — choose quality";
+      const filenameInput = document.getElementById("filenameInput");
+      if (filenameInput && body.title && !filenameInput.value.trim()) {
+        filenameInput.value = body.title;
+      }
+      setCodecEnabled(false);
+      setSubmitBlocked(false);
+      probeMode = "ytdlp";
+    } else if (body.type === "unsupported") {
+      hideAllPickers();
+      setCodecEnabled(true);
+      urlHint.textContent = body.message || "Unsupported URL";
+      setSubmitBlocked(true);
+      probeMode = null;
+    } else if (body.type === "hls_master" && body.variants && body.variants.length > 0) {
       populateResolutions(body.variants);
       populateTracks(audioGroup, audioList, body.audio_tracks || [], "audio");
       populateTracks(subtitleGroup, subtitleList, body.subtitle_tracks || [], "subtitle");
@@ -60,24 +119,57 @@ async function probe(url) {
       if ((body.audio_tracks || []).length) bits.push(`${body.audio_tracks.length} audio`);
       if ((body.subtitle_tracks || []).length) bits.push(`${body.subtitle_tracks.length} subtitle`);
       urlHint.textContent = `HLS master playlist — ${bits.join(", ")} track(s) available`;
+      setCodecEnabled(true);
+      setSubmitBlocked(false);
+      probeMode = "ffmpeg";
     } else if (body.type === "hls_media") {
       hideAllPickers();
       urlHint.textContent = "HLS media playlist — single resolution";
+      setCodecEnabled(true);
+      setSubmitBlocked(false);
+      probeMode = "ffmpeg";
     } else if (body.type === "direct") {
       hideAllPickers();
       urlHint.textContent = "Direct media URL";
+      setCodecEnabled(true);
+      setSubmitBlocked(false);
+      probeMode = "ffmpeg";
     } else {
       hideAllPickers();
       urlHint.textContent = body.message || "Could not inspect URL";
+      setCodecEnabled(true);
+      setSubmitBlocked(false);
+      probeMode = "ffmpeg";
     }
   } catch (e) {
     hideAllPickers();
     urlHint.textContent = `Inspect failed: ${e.message}`;
+    setCodecEnabled(true);
+    setSubmitBlocked(false);
+    probeMode = null;
   }
+}
+
+function populateExtractorFormats(formats) {
+  resolutionSelect.replaceChildren();
+  if (resolutionLabel) resolutionLabel.textContent = "Quality";
+  for (const f of formats) {
+    const o = document.createElement("option");
+    o.value = f.format_selector || "";
+    o.textContent = f.label || f.id || "format";
+    o.dataset.label = f.label || f.id || "";
+    resolutionSelect.appendChild(o);
+  }
+  audioGroup.setAttribute("hidden", "");
+  audioList.replaceChildren();
+  subtitleGroup.setAttribute("hidden", "");
+  subtitleList.replaceChildren();
+  resolutionGroup.removeAttribute("hidden");
 }
 
 function populateResolutions(variants) {
   resolutionSelect.replaceChildren();
+  if (resolutionLabel) resolutionLabel.textContent = "Video resolution";
   const auto = document.createElement("option");
   auto.value = "";
   auto.textContent = `Auto (highest — ${variants[0].label})`;

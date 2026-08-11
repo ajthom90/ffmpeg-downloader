@@ -17,6 +17,9 @@ def _make_job_row(**overrides):
         output_path="Movies/video.mp4",
         extension="mp4",
         codec="copy",
+        backend="ffmpeg",
+        format_selector=None,
+        format_label=None,
         command="ffmpeg -i ... video.mp4",
         status="queued",
         progress=None,
@@ -71,6 +74,61 @@ def test_list_jobs_newest_first(data_dir: Path):
     db.insert_job(_make_job_row(id="j_c", created_at=150))
     ids = [j["id"] for j in db.list_jobs(limit=10)]
     assert ids == ["j_b", "j_c", "j_a"]
+    db.close()
+
+
+def test_insert_ytdlp_fields(data_dir: Path):
+    db = Database.open(data_dir / "jobs.db")
+    row = _make_job_row(
+        backend="ytdlp",
+        format_selector="bv*+ba/b",
+        format_label="Best available",
+    )
+    db.insert_job(row)
+    fetched = db.get_job("j_test01")
+    assert fetched["backend"] == "ytdlp"
+    assert fetched["format_selector"] == "bv*+ba/b"
+    assert fetched["format_label"] == "Best available"
+    db.close()
+
+
+def test_migrate_adds_columns_to_legacy_db(data_dir: Path):
+    """Simulate a pre-ytdlp schema and ensure open() adds columns."""
+    import sqlite3
+
+    path = data_dir / "legacy.db"
+    conn = sqlite3.connect(str(path))
+    conn.executescript(
+        """
+        CREATE TABLE jobs (
+          id TEXT PRIMARY KEY,
+          url TEXT NOT NULL,
+          selected_variant_url TEXT,
+          selected_variant_label TEXT,
+          filename TEXT NOT NULL,
+          output_path TEXT NOT NULL,
+          extension TEXT NOT NULL,
+          codec TEXT NOT NULL,
+          command TEXT NOT NULL,
+          status TEXT NOT NULL,
+          progress REAL,
+          duration_seconds REAL,
+          current_time_seconds REAL,
+          speed TEXT,
+          message TEXT,
+          created_at INTEGER NOT NULL,
+          started_at INTEGER,
+          finished_at INTEGER
+        );
+        """
+    )
+    conn.close()
+    db = Database.open(path)
+    row = _make_job_row(id="j_legacy")
+    db.insert_job(row)
+    fetched = db.get_job("j_legacy")
+    assert fetched["backend"] == "ffmpeg"
+    assert fetched["format_selector"] is None
     db.close()
 
 

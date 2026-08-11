@@ -12,13 +12,14 @@ from ffmpeg_downloader import create_app
 
 
 @pytest.fixture
-def app(download_root: Path, data_dir: Path, fake_ffmpeg_path, fake_ffprobe_path):
+def app(download_root: Path, data_dir: Path, fake_ffmpeg_path, fake_ffprobe_path, fake_ytdlp_path):
     a = create_app(
         {
             "DOWNLOAD_ROOT": str(download_root),
             "DATA_DIR": str(data_dir),
             "FFMPEG_BIN": str(fake_ffmpeg_path),
             "FFPROBE_BIN": str(fake_ffprobe_path),
+            "YTDLP_BIN": str(fake_ytdlp_path),
             "MAX_CONCURRENT_JOBS": "2",
             "TESTING": True,
         }
@@ -169,6 +170,58 @@ def test_probe_unsupported_scheme(client):
 def test_probe_requires_url(client):
     r = client.post("/api/probe", json={})
     assert r.status_code == 400
+
+
+def test_probe_extractor_youtube(client, monkeypatch):
+    monkeypatch.setenv(
+        "FAKE_YTDLP_JSON_FILE",
+        str(Path(__file__).parent / "fixtures" / "ytdlp-single-video.json"),
+    )
+    r = client.post(
+        "/api/probe",
+        json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"},
+    )
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["type"] == "extractor"
+    assert body["title"] == "Sample Video Title"
+    assert body["formats"][0]["id"] == "best"
+
+
+def test_probe_playlist_unsupported(client, monkeypatch):
+    monkeypatch.setenv(
+        "FAKE_YTDLP_JSON_FILE",
+        str(Path(__file__).parent / "fixtures" / "ytdlp-playlist.json"),
+    )
+    r = client.post(
+        "/api/probe",
+        json={"url": "https://www.youtube.com/playlist?list=PLtest"},
+    )
+    body = r.get_json()
+    assert body["type"] == "unsupported"
+
+
+def test_post_ytdlp_download(app, client, monkeypatch):
+    monkeypatch.setenv("FAKE_YTDLP_TICKS", "1")
+    monkeypatch.setenv("FAKE_YTDLP_SLEEP", "0")
+    monkeypatch.setenv("FAKE_YTDLP_EXIT", "0")
+    r = client.post(
+        "/api/downloads",
+        json={
+            "url": "https://www.youtube.com/watch?v=abc",
+            "filename": "hello",
+            "extension": "mp4",
+            "codec": "copy",
+            "output_folder": "",
+            "backend": "ytdlp",
+            "format_selector": "bv*+ba/b",
+            "format_label": "Best available",
+        },
+    )
+    assert r.status_code == 201
+    job = r.get_json()
+    assert job["backend"] == "ytdlp"
+    _wait_for_job_status(app, job["id"], "completed")
 
 
 def _wait_for_job_status(app, job_id, status, timeout=8.0):

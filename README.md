@@ -7,6 +7,7 @@ A small self-hosted web app that wraps `ffmpeg` to download media — especially
 ## Features
 
 - Submit a URL, pick a folder, hit Download.
+- Paste a YouTube / site URL (yt-dlp); pick quality; download like any other job.
 - HLS master playlists are inspected automatically; choose a specific resolution before submitting.
 - Default codec is `copy` — pure passthrough, no transcode. Optional transcoding presets for h264 / h265 / vp9 / aac / mp3.
 - Five ways to pick the output folder:
@@ -45,6 +46,7 @@ A reference `docker-compose.example.yml` is included.
 | `SEARCH_CACHE_TTL_SECONDS` | `60` | TTL on the recursive-search folder cache. |
 | `SEARCH_RESULT_LIMIT` | `50` | Max recursive-search results. |
 | `FFMPEG_BIN` / `FFPROBE_BIN` | `ffmpeg` / `ffprobe` | Override the binary paths. |
+| `YTDLP_BIN` | `yt-dlp` | Path to the yt-dlp binary for site downloads. |
 
 ## Development
 
@@ -67,7 +69,9 @@ DOWNLOAD_ROOT=/tmp/ffd-root DATA_DIR=/tmp/ffd-data \
 
 ## Architecture (short)
 
-Flask app, one gunicorn worker (gthread, 16 threads), in-process `JobManager` running ffmpeg via `subprocess.Popen` with `-progress pipe:1`. SSE streams pull from a per-job pubsub. SQLite (WAL) persists the job table. See `docs/superpowers/specs/` for the full design.
+Flask app, one gunicorn worker (gthread, 16 threads), in-process `JobManager` running ffmpeg via `subprocess.Popen` with `-progress pipe:1` (and yt-dlp for site page URLs). SSE streams pull from a per-job pubsub. SQLite (WAL) persists the job table. See `docs/superpowers/specs/` for the full design.
+
+Site downloads use [yt-dlp](https://github.com/yt-dlp/yt-dlp). Extractors break when sites change — rebuild/pull a fresh image periodically. Public videos only (no cookies) in this version. Playlists/channels are rejected; paste a single video URL.
 
 ## License
 

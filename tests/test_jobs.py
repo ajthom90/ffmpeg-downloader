@@ -23,12 +23,13 @@ def fs(download_root: Path):
 
 
 @pytest.fixture
-def jm(db, fs, fake_ffmpeg_path, fake_ffprobe_path):
+def jm(db, fs, fake_ffmpeg_path, fake_ffprobe_path, fake_ytdlp_path):
     manager = JobManager(
         db=db,
         fs=fs,
         ffmpeg_bin=str(fake_ffmpeg_path),
         ffprobe_bin=str(fake_ffprobe_path),
+        ytdlp_bin=str(fake_ytdlp_path),
         max_concurrent_jobs=2,
     )
     try:
@@ -311,6 +312,59 @@ def test_cancel_running_job(jm, db, download_root, monkeypatch):
     assert cancelled["finished_at"] is not None
     # Partial output file should be cleaned up.
     assert not (download_root / "cancel.mp4").exists()
+
+
+def test_submit_ytdlp_persists_backend_fields(jm, db):
+    jm._submit_to_executor = lambda *_a, **_k: None  # type: ignore[attr-defined]
+    job = jm.submit(
+        JobSpec(
+            url="https://www.youtube.com/watch?v=abc",
+            selected_variant_url=None,
+            selected_variant_label=None,
+            filename="yt clip",
+            extension="mp4",
+            codec="copy",
+            output_folder="",
+            backend="ytdlp",
+            format_selector="bv*+ba/b",
+            format_label="Best available",
+        )
+    )
+    assert job["backend"] == "ytdlp"
+    assert job["format_selector"] == "bv*+ba/b"
+    assert "fake_ytdlp" in job["command"] or "yt-dlp" in job["command"]
+    stored = db.get_job(job["id"])
+    assert stored["backend"] == "ytdlp"
+
+
+def test_run_ytdlp_job_completes(jm, db, download_root, monkeypatch):
+    monkeypatch.setenv("FAKE_YTDLP_TICKS", "2")
+    monkeypatch.setenv("FAKE_YTDLP_SLEEP", "0")
+    monkeypatch.setenv("FAKE_YTDLP_EXIT", "0")
+    job = jm.submit(
+        JobSpec(
+            url="https://www.youtube.com/watch?v=abc",
+            selected_variant_url=None,
+            selected_variant_label=None,
+            filename="yt clip",
+            extension="mp4",
+            codec="copy",
+            output_folder="",
+            backend="ytdlp",
+            format_selector="bv*+ba/b",
+            format_label="Best available",
+        )
+    )
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        row = db.get_job(job["id"])
+        if row["status"] == "completed":
+            break
+        time.sleep(0.05)
+    row = db.get_job(job["id"])
+    assert row["status"] == "completed"
+    assert (download_root / row["output_path"]).exists()
+    assert row["progress"] == 100.0
 
 
 def test_cancel_unknown_job_is_noop(jm):

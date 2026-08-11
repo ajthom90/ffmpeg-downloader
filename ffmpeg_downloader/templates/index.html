@@ -20,7 +20,7 @@
       </div>
 
       <div class="field" id="resolutionGroup" hidden>
-        <label for="resolutionSelect">Video resolution</label>
+        <label for="resolutionSelect" id="resolutionLabel">Video resolution</label>
         <select id="resolutionSelect" name="selected_variant_url"></select>
       </div>
 
@@ -76,10 +76,11 @@
             <option value="aac">aac (audio only)</option>
             <option value="mp3">mp3 (audio only)</option>
           </select>
+          <div id="codecHint" class="hint" hidden>Codec does not apply to site downloads</div>
         </div>
       </div>
 
-      <button type="submit" class="btn btn-primary submit-btn">Download</button>
+      <button type="submit" id="submitBtn" class="btn btn-primary submit-btn">Download</button>
     </form>
 
     <section class="jobs">

@@ -33,9 +33,16 @@ def fake_ffprobe_path() -> Path:
     return Path(__file__).parent / "fake_ffprobe.sh"
 
 
+@pytest.fixture
+def fake_ytdlp_path() -> Path:
+    return Path(__file__).parent / "fake_ytdlp.sh"
+
+
 @pytest.fixture(autouse=True)
-def _ensure_shims_executable(fake_ffmpeg_path: Path, fake_ffprobe_path: Path) -> None:
-    for p in (fake_ffmpeg_path, fake_ffprobe_path):
+def _ensure_shims_executable(
+    fake_ffmpeg_path: Path, fake_ffprobe_path: Path, fake_ytdlp_path: Path
+) -> None:
+    for p in (fake_ffmpeg_path, fake_ffprobe_path, fake_ytdlp_path):
         if p.exists():
             st = p.stat()
             p.chmod(st.st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)

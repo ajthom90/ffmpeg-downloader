@@ -20,6 +20,7 @@ def test_config_defaults(download_root: Path, data_dir: Path, monkeypatch):
     assert cfg.search_result_limit == 50
     assert cfg.ffmpeg_bin == "ffmpeg"
     assert cfg.ffprobe_bin == "ffprobe"
+    assert cfg.ytdlp_bin == "yt-dlp"
 
 
 def test_config_overrides(download_root: Path, data_dir: Path, monkeypatch):
@@ -32,6 +33,14 @@ def test_config_overrides(download_root: Path, data_dir: Path, monkeypatch):
     assert cfg.port == 9000
     assert cfg.max_concurrent_jobs == 4
     assert cfg.ffmpeg_bin == "/usr/local/bin/ffmpeg"
+
+
+def test_config_ytdlp_bin_override(download_root: Path, data_dir: Path, monkeypatch):
+    monkeypatch.setenv("DOWNLOAD_ROOT", str(download_root))
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+    monkeypatch.setenv("YTDLP_BIN", "/opt/bin/yt-dlp")
+    cfg = Config.from_env()
+    assert cfg.ytdlp_bin == "/opt/bin/yt-dlp"
 
 
 def test_config_rejects_missing_download_root(tmp_path: Path, monkeypatch):

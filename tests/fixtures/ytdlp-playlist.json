@@ -1,0 +1,11 @@
+{
+  "_type": "playlist",
+  "id": "PLtest",
+  "title": "A Playlist",
+  "extractor": "youtube",
+  "webpage_url": "https://www.youtube.com/playlist?list=PLtest",
+  "entries": [
+    {"id": "aaa", "title": "One"},
+    {"id": "bbb", "title": "Two"}
+  ]
+}

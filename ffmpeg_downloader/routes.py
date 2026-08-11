@@ -13,6 +13,7 @@ from flask import (
 )
 
 from . import probe as _probe
+from . import ytdlp as _ytdlp
 from .ffmpeg_command import UnsupportedCodecError, UnsupportedSchemeError
 from .filesystem import InvalidNameError, PathTraversalError, RootedFS
 from .jobs import JobSpec
@@ -96,6 +97,16 @@ def register(app: Flask) -> None:
         scheme = urlparse(url).scheme.lower()
         if scheme not in ("http", "https"):
             return jsonify({"error": "only http(s) URLs are allowed"}), 400
+
+        cfg = current_app.extensions["config"]
+        if not _ytdlp.looks_like_direct_media(url):
+            ext = _ytdlp.probe_extractor(url, ytdlp_bin=cfg.ytdlp_bin)
+            if ext.get("type") == "extractor":
+                return jsonify(ext)
+            if ext.get("type") == "unsupported":
+                return jsonify(ext)
+            # type == "none" → fall through to HLS/direct probe
+
         result = _probe.probe_url(url)
         return jsonify(
             {
@@ -127,8 +138,17 @@ def register(app: Flask) -> None:
         if not isinstance(audio_urls, list) or not isinstance(subtitle_urls, list):
             return jsonify({"error": "audio_urls and subtitle_urls must be arrays"}), 400
 
-        # Scheme guard for every URL the server will hand to ffmpeg.
-        for u in (url, body.get("selected_variant_url") or "", *audio_urls, *subtitle_urls):
+        backend = body.get("backend") or "ffmpeg"
+        if backend not in ("ffmpeg", "ytdlp"):
+            return jsonify({"error": "backend must be ffmpeg or ytdlp"}), 400
+
+        # Scheme guard for every URL the server will hand to the downloader.
+        urls_to_check = [url]
+        if backend == "ffmpeg":
+            urls_to_check.extend(
+                [body.get("selected_variant_url") or "", *audio_urls, *subtitle_urls]
+            )
+        for u in urls_to_check:
             if not u:
                 continue
             scheme = urlparse(u).scheme.lower()
@@ -151,6 +171,9 @@ def register(app: Flask) -> None:
             output_folder=output_folder,
             audio_urls=audio_urls,
             subtitle_urls=subtitle_urls,
+            backend=backend,
+            format_selector=body.get("format_selector") or None,
+            format_label=body.get("format_label") or None,
         )
         try:
             job = jm.submit(spec)

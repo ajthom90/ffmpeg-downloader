@@ -14,6 +14,7 @@ from typing import Any
 
 from ulid import ULID
 
+from . import ytdlp as _ytdlp
 from .db import Database
 from .ffmpeg_command import build_command, build_multi_input_command, pretty_command
 from .filesystem import RootedFS
@@ -32,6 +33,9 @@ class JobSpec:
     output_folder: str
     audio_urls: list[str] = field(default_factory=list)
     subtitle_urls: list[str] = field(default_factory=list)
+    backend: str = "ffmpeg"
+    format_selector: str | None = None
+    format_label: str | None = None
 
 
 def _sanitize_filename(name: str, extension: str) -> str:
@@ -65,12 +69,14 @@ class JobManager:
         fs: RootedFS,
         ffmpeg_bin: str,
         ffprobe_bin: str,
+        ytdlp_bin: str,
         max_concurrent_jobs: int,
     ):
         self._db = db
         self._fs = fs
         self._ffmpeg_bin = ffmpeg_bin
         self._ffprobe_bin = ffprobe_bin
+        self._ytdlp_bin = ytdlp_bin
         self._executor = ThreadPoolExecutor(max_workers=max_concurrent_jobs)
         self._lock = threading.Lock()
         self._db_lock = threading.Lock()
@@ -99,7 +105,17 @@ class JobManager:
         rel_output = self._fs.rel(folder_abs / filename) if folder_rel else filename
 
         out_abs = str(folder_abs / filename)
-        if spec.audio_urls or spec.subtitle_urls:
+        backend = spec.backend if spec.backend in ("ffmpeg", "ytdlp") else "ffmpeg"
+        if backend == "ytdlp":
+            selector = spec.format_selector or _ytdlp.DEFAULT_FORMAT_SELECTOR
+            argv = _ytdlp.build_download_argv(
+                ytdlp_bin=self._ytdlp_bin,
+                url=spec.url,
+                format_selector=selector,
+                output_path=out_abs,
+                extension=spec.extension,
+            )
+        elif spec.audio_urls or spec.subtitle_urls:
             # Multi-input mux: requires a specific video stream URL — the master
             # URL can't be used as the video source when separate audio/subtitle
             # inputs are also provided (would duplicate streams).
@@ -133,6 +149,11 @@ class JobManager:
             "output_path": rel_output,
             "extension": spec.extension,
             "codec": spec.codec,
+            "backend": backend,
+            "format_selector": (spec.format_selector or _ytdlp.DEFAULT_FORMAT_SELECTOR)
+            if backend == "ytdlp"
+            else None,
+            "format_label": spec.format_label if backend == "ytdlp" else None,
             "command": cmd_str,
             "status": "queued",
             "progress": None,
@@ -221,8 +242,12 @@ def _run_job_impl(self: JobManager, job_id: str, argv: list[str], output_path: s
     job_row = self._db.get_job(job_id)
     if job_row is None:
         return
-    input_url = job_row["selected_variant_url"] or job_row["url"]
-    duration = _probe_duration(self._ffprobe_bin, input_url)
+    backend = job_row.get("backend") or "ffmpeg"
+    if backend == "ytdlp":
+        duration = None
+    else:
+        input_url = job_row["selected_variant_url"] or job_row["url"]
+        duration = _probe_duration(self._ffprobe_bin, input_url)
     now = int(time.time())
     with self._db_lock:
         self._db.update_job(job_id, status="running", started_at=now, duration_seconds=duration)
@@ -237,7 +262,8 @@ def _run_job_impl(self: JobManager, job_id: str, argv: list[str], output_path: s
             bufsize=1,
         )
     except FileNotFoundError as e:
-        self._finalize(job_id, "failed", message=f"ffmpeg not found: {e}")
+        tool = "yt-dlp" if backend == "ytdlp" else "ffmpeg"
+        self._finalize(job_id, "failed", message=f"{tool} not found: {e}")
         return
 
     with self._lock:
@@ -249,36 +275,47 @@ def _run_job_impl(self: JobManager, job_id: str, argv: list[str], output_path: s
     speed = None
     try:
         assert proc.stdout is not None
-        for raw_line in proc.stdout:
-            kv = _parse_progress_line(raw_line.strip())
-            if not kv:
-                continue
-            key, value = kv
-            # ffmpeg's progress block emits both keys; both are in microseconds
-            # despite the name `out_time_ms` (long-standing ffmpeg quirk). Treat
-            # them the same — whichever arrives first wins, the other is a no-op.
-            if key in ("out_time_us", "out_time_ms"):
-                try:
-                    current_time = int(value) / 1_000_000.0
-                except ValueError:
+        if backend == "ytdlp":
+            for raw_line in proc.stdout:
+                parsed = _ytdlp.parse_progress_line(raw_line.strip())
+                if not parsed:
                     continue
-            elif key == "speed":
-                speed = value
-            elif key == "progress" and value == "end":
-                break
-
-            if current_time is not None:
-                pct = None
-                if duration and duration > 0:
-                    pct = min(100.0, max(0.0, current_time / duration * 100.0))
+                pct = min(100.0, max(0.0, float(parsed["percent"])))
+                speed = parsed.get("speed")
                 with self._db_lock:
-                    self._db.update_job(
-                        job_id,
-                        progress=pct,
-                        current_time_seconds=current_time,
-                        speed=speed,
-                    )
-                self._publish_progress(job_id, pct, current_time, speed)
+                    self._db.update_job(job_id, progress=pct, speed=speed)
+                self._publish_progress(job_id, pct, None, speed)
+        else:
+            for raw_line in proc.stdout:
+                kv = _parse_progress_line(raw_line.strip())
+                if not kv:
+                    continue
+                key, value = kv
+                # ffmpeg's progress block emits both keys; both are in microseconds
+                # despite the name `out_time_ms` (long-standing ffmpeg quirk). Treat
+                # them the same — whichever arrives first wins, the other is a no-op.
+                if key in ("out_time_us", "out_time_ms"):
+                    try:
+                        current_time = int(value) / 1_000_000.0
+                    except ValueError:
+                        continue
+                elif key == "speed":
+                    speed = value
+                elif key == "progress" and value == "end":
+                    break
+
+                if current_time is not None:
+                    pct = None
+                    if duration and duration > 0:
+                        pct = min(100.0, max(0.0, current_time / duration * 100.0))
+                    with self._db_lock:
+                        self._db.update_job(
+                            job_id,
+                            progress=pct,
+                            current_time_seconds=current_time,
+                            speed=speed,
+                        )
+                    self._publish_progress(job_id, pct, current_time, speed)
     finally:
         proc.wait()
         with self._lock:

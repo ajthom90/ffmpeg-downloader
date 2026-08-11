@@ -8,7 +8,7 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY pyproject.toml README.md ./
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir . yt-dlp
 
 COPY ffmpeg_downloader ./ffmpeg_downloader
 

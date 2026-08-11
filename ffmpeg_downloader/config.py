@@ -20,6 +20,7 @@ class Config:
     search_result_limit: int
     ffmpeg_bin: str
     ffprobe_bin: str
+    ytdlp_bin: str
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Config:
@@ -48,4 +49,5 @@ class Config:
             search_result_limit=int(e.get("SEARCH_RESULT_LIMIT", "50")),
             ffmpeg_bin=e.get("FFMPEG_BIN", "ffmpeg"),
             ffprobe_bin=e.get("FFPROBE_BIN", "ffprobe"),
+            ytdlp_bin=e.get("YTDLP_BIN", "yt-dlp"),
         )

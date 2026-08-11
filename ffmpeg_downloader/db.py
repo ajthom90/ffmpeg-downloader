@@ -14,6 +14,9 @@ CREATE TABLE IF NOT EXISTS jobs (
   output_path            TEXT NOT NULL,
   extension              TEXT NOT NULL,
   codec                  TEXT NOT NULL,
+  backend                TEXT NOT NULL DEFAULT 'ffmpeg',
+  format_selector        TEXT,
+  format_label           TEXT,
   command                TEXT NOT NULL,
   status                 TEXT NOT NULL,
   progress               REAL,
@@ -37,6 +40,9 @@ JOB_COLUMNS = (
     "output_path",
     "extension",
     "codec",
+    "backend",
+    "format_selector",
+    "format_label",
     "command",
     "status",
     "progress",
@@ -61,7 +67,22 @@ class Database:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA foreign_keys=ON;")
         conn.executescript(SCHEMA)
-        return cls(conn)
+        db = cls(conn)
+        db._migrate()
+        return db
+
+    def _migrate(self) -> None:
+        cur = self._conn.execute("PRAGMA table_info(jobs)")
+        existing = {row[1] for row in cur.fetchall()}
+        alters: list[str] = []
+        if "backend" not in existing:
+            alters.append("ALTER TABLE jobs ADD COLUMN backend TEXT NOT NULL DEFAULT 'ffmpeg'")
+        if "format_selector" not in existing:
+            alters.append("ALTER TABLE jobs ADD COLUMN format_selector TEXT")
+        if "format_label" not in existing:
+            alters.append("ALTER TABLE jobs ADD COLUMN format_label TEXT")
+        for sql in alters:
+            self._conn.execute(sql)
 
     def close(self) -> None:
         self._conn.close()

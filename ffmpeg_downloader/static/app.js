@@ -2,7 +2,11 @@
 // Vanilla JS, ES modules, no framework.
 
 import "./folder-picker.js";
-import { getSelectedTrackUrls } from "./resolution-picker.js";
+import {
+  getSelectedTrackUrls,
+  getDownloadBackend,
+  getSelectedFormat,
+} from "./resolution-picker.js";
 
 // ---------------------------------------------------------------------------
 // State
@@ -169,34 +173,43 @@ async function api(method, path, body) {
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const audioUrls = getSelectedTrackUrls("audio");
-  const subtitleUrls = getSelectedTrackUrls("subtitle");
-  // Multi-input mux requires a specific video variant. If the user wants
-  // separate audio/subtitle streams but left the video selector on "Auto",
-  // pick the highest-bitrate variant for them (its URL is the first concrete
-  // option in the dropdown).
-  let videoUrl = resolutionSelect.value || null;
-  let videoLabel = videoUrl
-    ? resolutionSelect.options[resolutionSelect.selectedIndex].textContent
-    : null;
-  if (!videoUrl && (audioUrls.length || subtitleUrls.length)) {
-    const firstConcrete = [...resolutionSelect.options].find((o) => o.value);
-    if (firstConcrete) {
-      videoUrl = firstConcrete.value;
-      videoLabel = firstConcrete.textContent;
-    }
-  }
+  const backend = getDownloadBackend();
   const body = {
     url: urlInput.value.trim(),
-    selected_variant_url: videoUrl,
-    selected_variant_label: videoLabel,
-    audio_urls: audioUrls,
-    subtitle_urls: subtitleUrls,
     filename: $("filenameInput").value.trim(),
     extension: $("extensionSelect").value,
     codec: $("codecSelect").value,
     output_folder: $("outputFolder").value.trim(),
   };
+  if (backend === "ytdlp") {
+    const fmt = getSelectedFormat() || {};
+    body.backend = "ytdlp";
+    body.format_selector = fmt.format_selector;
+    body.format_label = fmt.format_label;
+  } else {
+    const audioUrls = getSelectedTrackUrls("audio");
+    const subtitleUrls = getSelectedTrackUrls("subtitle");
+    // Multi-input mux requires a specific video variant. If the user wants
+    // separate audio/subtitle streams but left the video selector on "Auto",
+    // pick the highest-bitrate variant for them (its URL is the first concrete
+    // option in the dropdown).
+    let videoUrl = resolutionSelect.value || null;
+    let videoLabel = videoUrl
+      ? resolutionSelect.options[resolutionSelect.selectedIndex].textContent
+      : null;
+    if (!videoUrl && (audioUrls.length || subtitleUrls.length)) {
+      const firstConcrete = [...resolutionSelect.options].find((o) => o.value);
+      if (firstConcrete) {
+        videoUrl = firstConcrete.value;
+        videoLabel = firstConcrete.textContent;
+      }
+    }
+    body.backend = "ffmpeg";
+    body.selected_variant_url = videoUrl;
+    body.selected_variant_label = videoLabel;
+    body.audio_urls = audioUrls;
+    body.subtitle_urls = subtitleUrls;
+  }
   try {
     const job = await api("POST", "/api/downloads", body);
     upsertJob(job);
