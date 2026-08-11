@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +60,9 @@ JOB_COLUMNS = (
 class Database:
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
+        # Serialize all access — sqlite3 connections are not fully thread-safe
+        # even with check_same_thread=False.
+        self._lock = threading.RLock()
 
     @classmethod
     def open(cls, path: Path) -> Database:
@@ -72,55 +76,65 @@ class Database:
         return db
 
     def _migrate(self) -> None:
-        cur = self._conn.execute("PRAGMA table_info(jobs)")
-        existing = {row[1] for row in cur.fetchall()}
-        alters: list[str] = []
-        if "backend" not in existing:
-            alters.append("ALTER TABLE jobs ADD COLUMN backend TEXT NOT NULL DEFAULT 'ffmpeg'")
-        if "format_selector" not in existing:
-            alters.append("ALTER TABLE jobs ADD COLUMN format_selector TEXT")
-        if "format_label" not in existing:
-            alters.append("ALTER TABLE jobs ADD COLUMN format_label TEXT")
-        for sql in alters:
-            self._conn.execute(sql)
+        with self._lock:
+            cur = self._conn.execute("PRAGMA table_info(jobs)")
+            existing = {row[1] for row in cur.fetchall()}
+            alters: list[str] = []
+            if "backend" not in existing:
+                alters.append("ALTER TABLE jobs ADD COLUMN backend TEXT NOT NULL DEFAULT 'ffmpeg'")
+            if "format_selector" not in existing:
+                alters.append("ALTER TABLE jobs ADD COLUMN format_selector TEXT")
+            if "format_label" not in existing:
+                alters.append("ALTER TABLE jobs ADD COLUMN format_label TEXT")
+            for sql in alters:
+                self._conn.execute(sql)
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
 
     def insert_job(self, row: dict[str, Any]) -> None:
         cols = ", ".join(JOB_COLUMNS)
         placeholders = ", ".join("?" for _ in JOB_COLUMNS)
         values = tuple(row[c] for c in JOB_COLUMNS)
-        self._conn.execute(f"INSERT INTO jobs ({cols}) VALUES ({placeholders})", values)
+        with self._lock:
+            self._conn.execute(f"INSERT INTO jobs ({cols}) VALUES ({placeholders})", values)
 
     def update_job(self, job_id: str, **fields: Any) -> None:
         if not fields:
             return
         assignments = ", ".join(f"{k} = ?" for k in fields)
         values = (*fields.values(), job_id)
-        self._conn.execute(f"UPDATE jobs SET {assignments} WHERE id = ?", values)
+        with self._lock:
+            self._conn.execute(f"UPDATE jobs SET {assignments} WHERE id = ?", values)
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
-        cur = self._conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,))
-        r = cur.fetchone()
-        return dict(r) if r else None
+        with self._lock:
+            cur = self._conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,))
+            r = cur.fetchone()
+            return dict(r) if r else None
 
     def list_jobs(self, limit: int = 50) -> list[dict[str, Any]]:
-        cur = self._conn.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,))
-        return [dict(r) for r in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     def delete_job(self, job_id: str) -> None:
-        self._conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+        with self._lock:
+            self._conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
 
     def reconcile_on_startup(self, now: int, retention_days: int) -> None:
-        self._conn.execute(
-            "UPDATE jobs SET status='failed', message='Interrupted by restart', finished_at=? "
-            "WHERE status IN ('queued','running')",
-            (now,),
-        )
-        cutoff = now - retention_days * 86400
-        self._conn.execute(
-            "DELETE FROM jobs WHERE status IN ('completed','failed','cancelled') "
-            "AND finished_at IS NOT NULL AND finished_at < ?",
-            (cutoff,),
-        )
+        with self._lock:
+            self._conn.execute(
+                "UPDATE jobs SET status='failed', message='Interrupted by restart', "
+                "finished_at=? WHERE status IN ('queued','running')",
+                (now,),
+            )
+            cutoff = now - retention_days * 86400
+            self._conn.execute(
+                "DELETE FROM jobs WHERE status IN ('completed','failed','cancelled') "
+                "AND finished_at IS NOT NULL AND finished_at < ?",
+                (cutoff,),
+            )
