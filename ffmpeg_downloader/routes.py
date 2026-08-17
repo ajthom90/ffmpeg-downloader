@@ -100,7 +100,11 @@ def register(app: Flask) -> None:
 
         cfg = current_app.extensions["config"]
         if not _ytdlp.looks_like_direct_media(url):
-            ext = _ytdlp.probe_extractor(url, ytdlp_bin=cfg.ytdlp_bin)
+            ext = _ytdlp.probe_extractor(
+                url,
+                ytdlp_bin=cfg.ytdlp_bin,
+                js_runtime=cfg.ytdlp_js_runtime,
+            )
             if ext.get("type") == "extractor":
                 return jsonify(ext)
             if ext.get("type") == "unsupported":

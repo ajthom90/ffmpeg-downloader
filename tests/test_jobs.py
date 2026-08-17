@@ -335,6 +335,8 @@ def test_submit_ytdlp_persists_backend_fields(jm, db):
     assert "fake_ytdlp" in job["command"] or "yt-dlp" in job["command"]
     stored = db.get_job(job["id"])
     assert stored["backend"] == "ytdlp"
+    assert "--js-runtimes" in job["command"]
+    assert "deno" in job["command"]
 
 
 def test_run_ytdlp_job_completes(jm, db, download_root, monkeypatch):

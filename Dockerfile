@@ -2,13 +2,24 @@
 
 FROM python:3.12-slim AS base
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg ca-certificates tini \
+ && apt-get install -y --no-install-recommends ffmpeg ca-certificates tini curl unzip \
+ && ARCH="$(uname -m)" \
+ && case "$ARCH" in \
+      x86_64) DENO_ARCH=x86_64-unknown-linux-gnu ;; \
+      aarch64) DENO_ARCH=aarch64-unknown-linux-gnu ;; \
+      *) echo "unsupported arch: $ARCH" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSL "https://github.com/denoland/deno/releases/latest/download/deno-${DENO_ARCH}.zip" -o /tmp/deno.zip \
+ && unzip -o /tmp/deno.zip -d /usr/local/bin \
+ && chmod +x /usr/local/bin/deno \
+ && rm /tmp/deno.zip \
+ && deno --version \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY pyproject.toml README.md ./
-RUN pip install --no-cache-dir . yt-dlp
+RUN pip install --no-cache-dir . "yt-dlp[default]"
 
 COPY ffmpeg_downloader ./ffmpeg_downloader
 

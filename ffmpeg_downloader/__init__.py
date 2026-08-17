@@ -33,6 +33,7 @@ def create_app(config_overrides: dict[str, Any] | None = None) -> Flask:
         ffmpeg_bin=config.ffmpeg_bin,
         ffprobe_bin=config.ffprobe_bin,
         ytdlp_bin=config.ytdlp_bin,
+        ytdlp_js_runtime=config.ytdlp_js_runtime,
         max_concurrent_jobs=config.max_concurrent_jobs,
     )
 

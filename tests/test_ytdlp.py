@@ -34,6 +34,18 @@ def test_group_formats_includes_best_heights_audio():
     assert audio["is_audio_only"] is True
 
 
+def test_js_runtime_args():
+    assert y.js_runtime_args("deno") == ["--js-runtimes", "deno"]
+    assert y.js_runtime_args("node") == ["--js-runtimes", "node"]
+    assert y.js_runtime_args("deno:/usr/local/bin/deno") == [
+        "--js-runtimes",
+        "deno:/usr/local/bin/deno",
+    ]
+    assert y.js_runtime_args("") == []
+    assert y.js_runtime_args(None) == []
+    assert y.js_runtime_args("  ") == []
+
+
 def test_build_download_argv():
     argv = y.build_download_argv(
         ytdlp_bin="/usr/bin/yt-dlp",
@@ -50,6 +62,20 @@ def test_build_download_argv():
     assert "--no-playlist" in argv
     assert "--merge-output-format" in argv
     assert "mp4" in argv
+    assert "--js-runtimes" in argv
+    assert argv[argv.index("--js-runtimes") + 1] == "deno"
+
+
+def test_build_download_argv_custom_js_runtime():
+    argv = y.build_download_argv(
+        ytdlp_bin="/usr/bin/yt-dlp",
+        url="https://www.youtube.com/watch?v=abc",
+        format_selector="bv*+ba/b",
+        output_path="/downloads/clip.mp4",
+        extension="mp4",
+        js_runtime="node",
+    )
+    assert argv[argv.index("--js-runtimes") + 1] == "node"
 
 
 def test_parse_progress_line_percent():
@@ -61,6 +87,32 @@ def test_parse_progress_line_percent():
 def test_parse_progress_line_download_fallback():
     parsed = y.parse_progress_line("[download]  45.3% of 10.00MiB at 1.00MiB/s")
     assert parsed == {"percent": 45.3, "speed": None}
+
+
+def test_extract_info_passes_js_runtime(monkeypatch):
+    captured: dict = {}
+
+    def fake_run(argv, **_kwargs):
+        captured["argv"] = argv
+
+        class _Proc:
+            returncode = 0
+            stdout = json.dumps({"title": "x", "_type": "video"})
+            stderr = ""
+
+        return _Proc()
+
+    monkeypatch.setattr(y.subprocess, "run", fake_run)
+    result = y.extract_info(
+        "https://www.youtube.com/watch?v=abc",
+        ytdlp_bin="yt-dlp",
+        js_runtime="deno",
+    )
+    assert result["ok"] is True
+    argv = captured["argv"]
+    assert "--js-runtimes" in argv
+    assert argv[argv.index("--js-runtimes") + 1] == "deno"
+    assert "--dump-single-json" in argv
 
 
 def test_extract_info_video(fake_ytdlp_path, monkeypatch):

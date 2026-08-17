@@ -21,6 +21,7 @@ class Config:
     ffmpeg_bin: str
     ffprobe_bin: str
     ytdlp_bin: str
+    ytdlp_js_runtime: str
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Config:
@@ -50,4 +51,5 @@ class Config:
             ffmpeg_bin=e.get("FFMPEG_BIN", "ffmpeg"),
             ffprobe_bin=e.get("FFPROBE_BIN", "ffprobe"),
             ytdlp_bin=e.get("YTDLP_BIN", "yt-dlp"),
+            ytdlp_js_runtime=e.get("YTDLP_JS_RUNTIME", "deno"),
         )

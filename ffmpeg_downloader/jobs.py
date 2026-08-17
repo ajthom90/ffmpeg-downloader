@@ -71,12 +71,14 @@ class JobManager:
         ffprobe_bin: str,
         ytdlp_bin: str,
         max_concurrent_jobs: int,
+        ytdlp_js_runtime: str = "deno",
     ):
         self._db = db
         self._fs = fs
         self._ffmpeg_bin = ffmpeg_bin
         self._ffprobe_bin = ffprobe_bin
         self._ytdlp_bin = ytdlp_bin
+        self._ytdlp_js_runtime = ytdlp_js_runtime
         self._executor = ThreadPoolExecutor(max_workers=max_concurrent_jobs)
         self._lock = threading.Lock()
         self._db_lock = threading.Lock()
@@ -114,6 +116,7 @@ class JobManager:
                 format_selector=selector,
                 output_path=out_abs,
                 extension=spec.extension,
+                js_runtime=self._ytdlp_js_runtime,
             )
         elif spec.audio_urls or spec.subtitle_urls:
             # Multi-input mux: requires a specific video stream URL — the master

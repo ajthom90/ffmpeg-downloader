@@ -21,6 +21,7 @@ def test_config_defaults(download_root: Path, data_dir: Path, monkeypatch):
     assert cfg.ffmpeg_bin == "ffmpeg"
     assert cfg.ffprobe_bin == "ffprobe"
     assert cfg.ytdlp_bin == "yt-dlp"
+    assert cfg.ytdlp_js_runtime == "deno"
 
 
 def test_config_overrides(download_root: Path, data_dir: Path, monkeypatch):
@@ -41,6 +42,14 @@ def test_config_ytdlp_bin_override(download_root: Path, data_dir: Path, monkeypa
     monkeypatch.setenv("YTDLP_BIN", "/opt/bin/yt-dlp")
     cfg = Config.from_env()
     assert cfg.ytdlp_bin == "/opt/bin/yt-dlp"
+
+
+def test_config_ytdlp_js_runtime_override(download_root: Path, data_dir: Path, monkeypatch):
+    monkeypatch.setenv("DOWNLOAD_ROOT", str(download_root))
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+    monkeypatch.setenv("YTDLP_JS_RUNTIME", "node")
+    cfg = Config.from_env()
+    assert cfg.ytdlp_js_runtime == "node"
 
 
 def test_config_rejects_missing_download_root(tmp_path: Path, monkeypatch):

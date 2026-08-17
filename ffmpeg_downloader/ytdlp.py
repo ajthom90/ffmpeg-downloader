@@ -9,6 +9,16 @@ from typing import Any
 from urllib.parse import urlparse
 
 DEFAULT_FORMAT_SELECTOR = "bv*+ba/b"
+DEFAULT_JS_RUNTIME = "deno"
+
+
+def js_runtime_args(js_runtime: str | None) -> list[str]:
+    runtime = (js_runtime or "").strip()
+    if not runtime:
+        return []
+    return ["--js-runtimes", runtime]
+
+
 _HEIGHT_BUCKETS = (2160, 1440, 1080, 720, 480, 360)
 _MEDIA_EXTS = {
     ".m3u8",
@@ -89,9 +99,11 @@ def build_download_argv(
     format_selector: str,
     output_path: str,
     extension: str,
+    js_runtime: str = DEFAULT_JS_RUNTIME,
 ) -> list[str]:
     return [
         ytdlp_bin,
+        *js_runtime_args(js_runtime),
         "--no-playlist",
         "--newline",
         "--progress",
@@ -127,9 +139,16 @@ def parse_progress_line(line: str) -> dict | None:
     return None
 
 
-def extract_info(url: str, *, ytdlp_bin: str, timeout: float = 60.0) -> dict[str, Any]:
+def extract_info(
+    url: str,
+    *,
+    ytdlp_bin: str,
+    js_runtime: str = DEFAULT_JS_RUNTIME,
+    timeout: float = 60.0,
+) -> dict[str, Any]:
     argv = [
         ytdlp_bin,
+        *js_runtime_args(js_runtime),
         "--skip-download",
         "--dump-single-json",
         "--no-playlist",
@@ -176,8 +195,10 @@ _RESTRICTED_MARKERS = (
 )
 
 
-def probe_extractor(url: str, *, ytdlp_bin: str) -> dict[str, Any]:
-    result = extract_info(url, ytdlp_bin=ytdlp_bin)
+def probe_extractor(
+    url: str, *, ytdlp_bin: str, js_runtime: str = DEFAULT_JS_RUNTIME
+) -> dict[str, Any]:
+    result = extract_info(url, ytdlp_bin=ytdlp_bin, js_runtime=js_runtime)
     if not result["ok"]:
         err = result["error"]
         low = err.lower()

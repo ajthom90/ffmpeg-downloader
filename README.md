@@ -47,6 +47,7 @@ A reference `docker-compose.example.yml` is included.
 | `SEARCH_RESULT_LIMIT` | `50` | Max recursive-search results. |
 | `FFMPEG_BIN` / `FFPROBE_BIN` | `ffmpeg` / `ffprobe` | Override the binary paths. |
 | `YTDLP_BIN` | `yt-dlp` | Path to the yt-dlp binary for site downloads. |
+| `YTDLP_JS_RUNTIME` | `deno` | JS runtime for YouTube (`deno`, `node`, or `deno:/path/to/deno`). |
 
 ## Development
 
@@ -71,7 +72,7 @@ DOWNLOAD_ROOT=/tmp/ffd-root DATA_DIR=/tmp/ffd-data \
 
 Flask app, one gunicorn worker (gthread, 16 threads), in-process `JobManager` running ffmpeg via `subprocess.Popen` with `-progress pipe:1` (and yt-dlp for site page URLs). SSE streams pull from a per-job pubsub. SQLite (WAL) persists the job table. See `docs/superpowers/specs/` for the full design.
 
-Site downloads use [yt-dlp](https://github.com/yt-dlp/yt-dlp). Extractors break when sites change — rebuild/pull a fresh image periodically. Public videos only (no cookies) in this version. Playlists/channels are rejected; paste a single video URL.
+Site downloads use [yt-dlp](https://github.com/yt-dlp/yt-dlp). YouTube now requires a JavaScript runtime to solve player challenges; the image ships [Deno](https://deno.land/) (yt-dlp's default). Override with `YTDLP_JS_RUNTIME` if you use Node instead. Extractors break when sites change — rebuild/pull a fresh image periodically. Public videos only (no cookies) in this version. Playlists/channels are rejected; paste a single video URL.
 
 ## License
 
